@@ -1,15 +1,21 @@
 {
-  "name": "solana-s1-market-recorder",
-  "version": "0.1.0",
+  "name": "solaris",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Research-first Solana new-pool discovery and snapshots; read-only, no trading.",
-  "engines": {"node": ">=22"},
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/collector.js && node --check src/server.js && node --check src/db.js && node --check src/normalize.js && node --check src/gecko.js",
-    "prune": "node scripts/prune.js"
+    "check": "node --check src/index.js && node --check src/collector.js && node --check src/server.js && node --check src/db.js && node --check src/normalize.js && node --check src/gecko.js && node --check src/s1b/config.js && node --check src/s1b/rpc.js && node --check src/s1b/parse.js && node --check src/s1b/store.js && node --check src/s1b/worker.js && node --check src/s1b/index.js && node --check src/s1b1/decoder.js && node --check src/s1b1/index.js",
+    "prune": "node scripts/prune.js",
+    "start:s1b": "node src/s1b/index.js",
+    "decode:s1b1": "node src/s1b1/index.js"
   },
-  "dependencies": {"pg": "^8.13.0"}
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
 }

@@ -13,19 +13,19 @@ These are **five role prompts**, not five separately finetuned models or long-li
 
 ## Zero paid-API fallback rule
 
-- Only \`S4_AI_BACKEND=codex\` is supported.
-- \`S4_PAID_API_FALLBACK=0\`, \`S4_LIVE_TRADING_ENABLED=0\`.
+- Only `S4_AI_BACKEND=codex` is supported.
+- `S4_PAID_API_FALLBACK=0`, `S4_LIVE_TRADING_ENABLED=0`.
 - No OpenAI API SDK/API calls are made by S4.1.
-- The child process receives only \`PATH\`, \`HOME\`, optional \`CODEX_HOME\`, and basic terminal variables: no \`OPENAI_API_KEY\`, \`DATABASE_URL\`, Solana RPC URLs or AWS secrets.
-- Before **each** Codex execution, \`codex login status\` must identify authentication as **ChatGPT**. Any API-key login or unavailable auth blocks that agent. This reduces accidental paid API use; verify Codex config and account billing separately because custom configured model providers or future CLI changes can affect routing.
+- The child process receives only `PATH`, `HOME`, optional `CODEX_HOME`, and basic terminal variables: no `OPENAI_API_KEY`, `DATABASE_URL`, Solana RPC URLs or AWS secrets.
+- Before **each** Codex execution, `codex login status` must identify authentication as **ChatGPT**. Any API-key login or unavailable auth blocks that agent. This reduces accidental paid API use; verify Codex config and account billing separately because custom configured model providers or future CLI changes can affect routing.
 - Codex usage through ChatGPT is **quota-limited**. The exact allowance depends on your plan. On quota/auth failure, the agent errors out; the research pipeline does not switch providers.
-- Codex runs in a temporary minimal working directory with \`--sandbox read-only --ask-for-approval never\`. Note: **read-only is not a complete secret-isolation boundary**; a local Codex process may still be able to read files accessible to the operating-system user. For stronger isolation run under a dedicated macOS account with no access to private keys, production credentials, personal files or MCP configurations. Do not treat prompt instructions as a security sandbox.
+- Codex runs in a temporary minimal working directory with `codex --ask-for-approval never exec --sandbox read-only`. Note: **read-only is not a complete secret-isolation boundary**; a local Codex process may still be able to read files accessible to the operating-system user. For stronger isolation run under a dedicated macOS account with no access to private keys, production credentials, personal files or MCP configurations. Do not treat prompt instructions as a security sandbox.
 
 ## Run on your Mac (Colima)
 
 Prerequisites: S1a/PostgreSQL running; Node.js >=22; install an up-to-date Codex CLI on the host using the official CLI instructions; use **ChatGPT sign-in**.
 
-\`\`\`bash
+```bash
 cd ~/solaris
 git pull --ff-only origin main
 npm install
@@ -53,29 +53,29 @@ npm run s4:run -- --context .solaris/s4-context.json
 S4_CODEX_ENABLED=1 S4_DRY_RUN=0 \
 npm run s4:run -- --context .solaris/s4-context.json \
   --agents discovery,onchain,security,strategy,audit
-\`\`\`
+```
 
 For a single cheap/manual research task, select only one role:
 
-\`\`\`bash
+```bash
 S4_CODEX_ENABLED=1 S4_DRY_RUN=0 \
 npm run s4:run -- --context .solaris/s4-context.json --agents audit
-\`\`\`
+```
 
-Optional \`S4_TIMEOUT_MS=120000\` caps each agent (15–300 seconds permitted). Each requested role launches at most one \`codex exec\` process; Codex may make multiple internal model requests during that process, so this is not a token or request budget. Max five roles and concurrency=1. Automatic periodic scheduling is deliberately not installed.
+Optional `S4_TIMEOUT_MS=120000` caps each agent (15–300 seconds permitted). Each requested role launches at most one `codex exec` process; Codex may make multiple internal model requests during that process, so this is not a token or request budget. Max five roles and concurrency=1. Automatic periodic scheduling is deliberately not installed.
 
 ## How it works
 
-1. **Exporter (in Docker)**: \`src/s4/export-context.js\` SELECTs at most 20 pools and a tiny set of S1–S3 counts/statuses. If optional S2 or S3 tables do not exist, it emits \`unknown\`. It does NOT export raw transactions, full pool payloads, API keys, wallet signer material, the .env file or DB URLs.
-2. **Policy layer**: \`src/s4/policy.js\` strips unexpected fields, validates timestamps and evidence IDs and limits text sizes.
-3. **Codex host adapter**: \`src/s4/orchestrator.js\` verifies ChatGPT auth, invokes structured \`codex exec\` with a read-only sandbox and timeout, and validates each JSON output. Unknown evidence IDs, additional fields, any attempted trade order, and \`economics_authorized=true\` are rejected.
-4. **Audit trail**: \`.solaris/s4-audit.ndjson\` records role, context digest, decision/status, evidence IDs, unknowns and next step. It is ignored by Git. Raw model terminal output is deliberately discarded. Logs may still contain potentially misleading model summaries; manually audit and protect the file.
+1. **Exporter (in Docker)**: `src/s4/export-context.js` SELECTs at most 20 pools and a tiny set of S1–S3 counts/statuses. If optional S2 or S3 tables do not exist, it emits `unknown`. It does NOT export raw transactions, full pool payloads, API keys, wallet signer material, the .env file or DB URLs.
+2. **Policy layer**: `src/s4/policy.js` strips unexpected fields, validates timestamps and evidence IDs and limits text sizes.
+3. **Codex host adapter**: `src/s4/orchestrator.js` verifies ChatGPT auth, invokes structured `codex exec` with a read-only sandbox and timeout, and validates each JSON output. Unknown evidence IDs, additional fields, any attempted trade order, and `economics_authorized=true` are rejected.
+4. **Audit trail**: `.solaris/s4-audit.ndjson` records role, context digest, decision/status, evidence IDs, unknowns and next step. It is ignored by Git. Raw model terminal output is deliberately discarded. Logs may still contain potentially misleading model summaries; manually audit and protect the file.
 
 Any model-produced recommendation is **research-only** and cannot authorize funds, execution, paper orders or strategy deployment.
 
 ## Sample output
 
-\`\`\`json
+```json
 {
   "mode": "DRY_RUN",
   "maxCalls": 0,
@@ -84,7 +84,7 @@ Any model-produced recommendation is **research-only** and cannot authorize fund
   "liveTrading": false,
   "paidApiFallback": false
 }
-\`\`\`
+```
 
 **Ready for S4.2?** Not yet proven by offline CI alone. First run against real sanitized S1–S3 data and successful ChatGPT-authenticated Codex CLI outputs. Validate prompts and evidence IDs by human review; check quota consumption.
 

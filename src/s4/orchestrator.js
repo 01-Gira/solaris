@@ -80,7 +80,7 @@ export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=12
  // Do not copy the repository, private env files or raw transactions to workspace.
  try{
   await writeFile(schemaPath,JSON.stringify(RESPONSE_SCHEMA),{mode:0o600});
-  const args=['exec','--sandbox','read-only','--ask-for-approval','never',
+  const args=['--ask-for-approval','never','exec','--sandbox','read-only',
     '--skip-git-repo-check','--output-schema',schemaPath,
     '--output-last-message',answerPath,'-'];
   const outcome=await new Promise((resolve,reject)=>{

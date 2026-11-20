@@ -84,7 +84,7 @@ export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=12
   if(Buffer.byteLength(raw,'utf8')>32768)throw new Error('codex_result_too_large');
   let decision;
   try{decision=JSON.parse(raw);}catch{throw new Error('codex_invalid_json');}
-  return validateDecision(role,decision,context);
+  return decision; // The orchestrator validates once at the shared trust boundary.
  }finally{
   await rm(workspace,{recursive:true,force:true}).catch(()=>{});
  }

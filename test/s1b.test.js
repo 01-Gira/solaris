@@ -50,7 +50,7 @@ test('token account opens and closes are handled from zero', () => {
 test('missing tx meta yields no inferred trades or prices', () => {
   assert.deepEqual(extractTokenBalanceChanges({}), []);
 });
-test('RPC getTransaction requests parsed finalized transaction with v0 support', async () => {
+test('RPC getTransaction requests parsed finalized transaction with v1 support', async () => {
   let payload;
   const rpc = new SolanaRpc('https://rpc.example.com', { spacingMs: 0, fetchImpl: async (_url, opts) => {
     payload = JSON.parse(opts.body);
@@ -60,8 +60,34 @@ test('RPC getTransaction requests parsed finalized transaction with v0 support',
   assert.equal(payload.method, 'getTransaction');
   assert.equal(payload.params[1].commitment, 'finalized');
   assert.equal(payload.params[1].encoding, 'jsonParsed');
-  assert.equal(payload.params[1].maxSupportedTransactionVersion, 0);
+  assert.equal(payload.params[1].maxSupportedTransactionVersion, 1);
 });
+test('RPC v1 transaction response remains parsable as raw token balance changes', async () => {
+  const v1Transaction = {
+    version: 1,
+    slot: 123456,
+    blockTime: 1795176000,
+    transaction: { signatures: [sig], message: { accountKeys: [] } },
+    meta: {
+      err: null,
+      fee: 5000,
+      preTokenBalances: [{ accountIndex: 3, mint, uiTokenAmount: { amount: '100', decimals: 6 } }],
+      postTokenBalances: [{ accountIndex: 3, mint, uiTokenAmount: { amount: '150', decimals: 6 } }]
+    }
+  };
+  const rpc = new SolanaRpc('https://rpc.example.com', {
+    spacingMs: 0,
+    fetchImpl: async (_url, opts) => {
+      const payload = JSON.parse(opts.body);
+      assert.equal(payload.params[1].maxSupportedTransactionVersion, 1);
+      return { ok: true, json: async () => ({ jsonrpc: '2.0', id: payload.id, result: v1Transaction }) };
+    }
+  });
+  const parsed = await rpc.getTransaction(sig);
+  assert.equal(parsed.version, 1);
+  assert.equal(extractTokenBalanceChanges(parsed)[0].deltaRaw, '50');
+});
+
 test('RPC HTTP 429 is preserved as a retriable error with a delay', async () => {
   const rpc = new SolanaRpc('https://rpc.example.com', { spacingMs: 0, fetchImpl: async () => ({ ok: false, status: 429, headers: { get: () => '5' } }) });
   await assert.rejects(rpc.call('getSlot'), error => error instanceof RpcError && error.retryAfterMs >= 30000);

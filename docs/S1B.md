@@ -8,7 +8,7 @@ Adds an **independent, read-only** Docker `stream` service. The existing S1a `re
 - Subscribes to Solana `logsSubscribe` with **one `mentions` filter per pool**, `finalized` commitment.
 - Captures signature, slot, notification error, logs, event arrival time, and origin (`live`/`backfill`).
 - Records watched pool membership/time in `onchain_watch_sessions`, including pools with no observed events.
-- Stores raw `getTransaction` JSON using `jsonParsed`, `maxSupportedTransactionVersion=0`, finalized commitment.
+- Stores raw `getTransaction` JSON using `jsonParsed`, `maxSupportedTransactionVersion=1`, finalized commitment.
 - Stores SPL token account pre/post changes as **raw integers**, with exact BigInt deltas (not amounts in USD, not wallet BUY/SELL classification).
 - Persists pending fetch jobs in PostgreSQL, retries with capped exponential backoff, and marks exhausted transactions unavailable without inventing data.
 - Reconnects/resubscribes periodically; queries `getSignaturesForAddress` (with `until` known cursor when available) to attempt limited recovery. Records recovery audits, all continuity **UNVERIFIED**.
@@ -57,6 +57,21 @@ docker compose exec -T db psql -U ramusen -d solaris -c "SELECT pool_address,sta
 ```
 
 Database constraint: `UNIQUE(pool_address,signature)` in `onchain_pool_events`, and primary key `signature` on `onchain_transactions`. A single signature can appear for more than one tracked pool; don't double count it when measuring market volume.
+
+## RPC transaction-version compatibility (Solana v1)
+
+Solana transaction v1 requires `maxSupportedTransactionVersion: 1` on `getTransaction`.
+A version ceiling of `0` produces RPC error `-32015` on v1 transactions even while
+`logsSubscribe` and `getSignaturesForAddress` continue working. The `jsonParsed`
+response is stored raw; SPL token balance deltas may be extracted, **not** DEX swaps.
+See https://solana.com/docs/core/transactions/versioned-transactions.
+
+For existing data previously exhausted due to `-32015`, use the scoped requeue script
+`sql/s1b_requeue_version_mismatch.sql` **after stopping only the `stream` service**
+so no worker races with the repair. The script leaves successful transactions intact
+and only resets unresolved signatures explicitly marked with that error.
+After starting the patched `stream` image, check `tx_status`, `tx_attempts`, and
+`last_fetch_error`. Other RPC failures and gaps still require independent audits.
 
 ## Exit gates before declaring completed S1b
 

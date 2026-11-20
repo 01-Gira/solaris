@@ -1,5 +1,6 @@
 // SOLARIS S4.1 — read-only Codex-first research agents.
 // Agent output is descriptive evidence, never an order or risk authorization.
+import {isSolanaAddress} from '../normalize.js';
 export const S4_VERSION='s4.1-0.6.0';
 export const ROLES=Object.freeze({
  discovery:'Assess discovery coverage, pool observation lag, sampling limits, and which pools merit more data collection.',
@@ -25,14 +26,14 @@ export const RESPONSE_SCHEMA={
   'next_research_step','economics_authorized']
 };
 const safeText=(value,max)=>typeof value==='string'?value.slice(0,max):'';
-const finite=(value)=>{if(value===null||value===undefined||value==='')return null;const n=Number(value);return Number.isFinite(n)?n:null;};
+const finite=(value)=>{if(value===null||value===undefined||value==='')return null;const n=Number(value);return Number.isFinite(n)&&n>=0?n:null;};
 const iso=(value)=>{if(value===null||value===undefined||value==='')return null;const d=new Date(value);return Number.isFinite(d.valueOf())?d.toISOString():null;};
 function safePool(p,i){
  return {
   evidence_id:'pool:'+i,
-  pool_address:safeText(p?.pool_address,45),
-  venue_family:safeText(p?.venue_family,32),
-  base_mint:safeText(p?.base_mint,45),
+  pool_address:isSolanaAddress(p?.pool_address)?p.pool_address:null,
+  venue_family:['pumpfun','pumpswap','meteora','raydium','orca','other'].includes(p?.venue_family)?p.venue_family:'other',
+  base_mint:isSolanaAddress(p?.base_mint)?p.base_mint:null,
   first_seen_at:iso(p?.first_seen_at),
   last_seen_at:iso(p?.last_seen_at),
   liquidity_usd:finite(p?.liquidity_usd),

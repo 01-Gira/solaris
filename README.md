@@ -1,5 +1,11 @@
 # SOLARIS — Solana Autonomous Research & Intelligence System
 
+> **S4.1 Codex-first research agents are now implemented (disabled by default).**
+> Five bounded agent roles use the Codex CLI through ChatGPT login, with no OpenAI API
+> fallback, no live trading or wallet access, an allowlisted S1–S3 context exporter,
+> strict JSON decisions and a local audit log.
+> Start with a dry run; see [S4 Codex usage](docs/S4_CODEX.md).
+
 > **Read-only research stack. No live trading, no wallet keys, and no verified profitable strategy.**
 >
 > S1a observes pools and price snapshots; S1b records on-chain transaction evidence;

@@ -7,3 +7,7 @@ dist/
 backup/
 *.db
 *.sqlite
+
+# S4 private local sanitized context and research audit
+.solaris/
+s4-context.json

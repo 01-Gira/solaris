@@ -62,7 +62,7 @@ S4_CODEX_ENABLED=1 S4_DRY_RUN=0 \
 npm run s4:run -- --context .solaris/s4-context.json --agents audit
 \`\`\`
 
-Optional \`S4_TIMEOUT_MS=120000\` caps each agent (15–300 seconds permitted). Each invocation makes at most one \`codex exec\` model call per requested role. Max five roles and concurrency=1. Automatic periodic scheduling is deliberately not installed.
+Optional \`S4_TIMEOUT_MS=120000\` caps each agent (15–300 seconds permitted). Each requested role launches at most one \`codex exec\` process; Codex may make multiple internal model requests during that process, so this is not a token or request budget. Max five roles and concurrency=1. Automatic periodic scheduling is deliberately not installed.
 
 ## How it works
 

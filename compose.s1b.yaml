@@ -1,0 +1,17 @@
+# Optional S1b streamer. No edits to S1a services or volumes.
+# Run: docker compose -f compose.yaml -f compose.s1b.yaml --profile s1b up -d --build stream
+services:
+  stream:
+    build: .
+    command: ["node", "src/s1b/index.js"]
+    init: true
+    restart: unless-stopped
+    profiles: ["s1b"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    # No ports and no private keys: read-only market-data acquisition.

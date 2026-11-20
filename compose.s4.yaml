@@ -1,0 +1,14 @@
+# Exporter only. Codex runs on the HOST under your ChatGPT-authenticated CLI session.
+# No Codex credentials or HOME directory are mounted into Docker.
+services:
+  s4-context:
+    build: .
+    restart: "no"
+    command: ["node", "src/s4/export-context.js"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true

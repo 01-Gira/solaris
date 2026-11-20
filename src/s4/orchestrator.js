@@ -38,6 +38,30 @@ export function codexChildEnv(env=process.env){
   LANG:'C.UTF-8',TERM:'dumb',NO_COLOR:'1'
  }).filter(([,v])=>typeof v==='string'&&v.length>0));
 }
+// Fail closed if the Codex CLI is authenticated with an API key instead of
+// ChatGPT. `codex login status` is a local check, not a billable model request.
+export async function assertChatGPTLogin({spawnImpl=spawn,env=process.env}={}){
+ const output=await new Promise((resolve,reject)=>{
+  const child=spawnImpl('codex',['login','status'],{env:codexChildEnv(env),stdio:['ignore','pipe','pipe']});
+  let bytes=0,data='',terminated=false;
+  const timer=setTimeout(()=>{terminated=true;child.kill('SIGKILL');},15000);
+  const collect=chunk=>{
+   bytes+=chunk.length;
+   if(bytes>4096){terminated=true;child.kill('SIGKILL');return;}
+   data+=chunk.toString('utf8');
+  };
+  child.stdout?.on('data',collect);child.stderr?.on('data',collect);
+  child.on('error',e=>{clearTimeout(timer);reject(new Error('codex_login_check_failed:'+e?.code));});
+  child.on('close',code=>{
+   clearTimeout(timer);
+   if(terminated||code!==0)reject(new Error('codex_login_not_available'));
+   else resolve(data);
+  });
+ });
+ if(!/\bLogged in using ChatGPT\b/i.test(output))throw new Error('codex_chatgpt_login_required');
+ return true;
+}
+
 export function parseRoleSelection(input){
  if(!input)return [...ROLE_NAMES];
  const roles=input.split(',').map(x=>x.trim());
@@ -48,6 +72,7 @@ export function parseRoleSelection(input){
 export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=120000,
   spawnImpl=spawn,env=process.env}){
  if(!ROLE_NAMES.includes(role))throw new Error('invalid_role');
+ await assertChatGPTLogin({spawnImpl,env});
  const workspace=await mkdtemp(path.join(os.tmpdir(),'solaris-s4-codex-'));
  const schemaPath=path.join(workspace,'schema.json');
  const answerPath=path.join(workspace,'answer.json');

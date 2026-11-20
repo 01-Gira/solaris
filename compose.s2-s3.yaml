@@ -1,0 +1,23 @@
+services:
+  risk:
+    build: .
+    restart: "no"
+    command: ["node", "src/s2/index.js"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+  research:
+    build: .
+    restart: "no"
+    command: ["node", "src/s3/index.js"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true

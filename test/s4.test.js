@@ -155,3 +155,14 @@ test('Codex auth missing fails closed',async()=>{
  await assert.rejects(()=>assertChatGPTLogin({spawnImpl:fakeLogin('Not logged in',1),
   env:{PATH:'/bin',HOME:'/tmp'}}),/codex_login_not_available/);
 });
+
+
+test('unknown missing numeric and time fields must remain null, never become 0 or 1970',()=>{
+ const ctx=sanitizeResearchContext({...raw,pools:[{
+  pool_address:'PoolX',base_mint:null,last_seen_at:null,liquidity_usd:null,
+  last_price_usd:null,risk_band:null}],stats:{total_events:null},s3:{ready_pools:null}});
+ assert.equal(ctx.pools[0].liquidity_usd,null);
+ assert.equal(ctx.pools[0].last_seen_at,null);
+ assert.equal(ctx.stats.total_events,null);
+ assert.equal(ctx.s3.ready_pools,null);
+});

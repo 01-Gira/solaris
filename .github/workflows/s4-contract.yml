@@ -1,0 +1,23 @@
+name: SOLARIS S4 contract
+on:
+  pull_request:
+    paths:
+      - 'src/s4/**'
+      - 'test/s4*.test.js'
+      - '.github/workflows/s4-contract.yml'
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: node --test test/s4.test.js
+      - run: node --check src/s4/policy.js
+      - run: node --check src/s4/orchestrator.js
+      - run: node --check src/s4/export-context.js
+      - run: node --check src/s4/index.js

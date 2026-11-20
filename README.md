@@ -1,3 +1,14 @@
+# SOLARIS — Solana Autonomous Research & Intelligence System
+
+> **Read-only research stack. No live trading, no wallet keys, and no verified profitable strategy.**
+>
+> S1a observes pools and price snapshots; S1b records on-chain transaction evidence;
+> S1b.1 adds conservative DEX classification; S2 audits mint/pool risk;
+> S3 provides a chronology-aware, audit-first strategy research framework.
+>
+> **S3's indexed provider marks are not executable fills.** Every S3 run is explicitly
+> non-authoritative (`economics_authorized=false`). See [S2/S3 documentation](docs/S2_S3.md).
+
 # Solana S1 — Market Data Recorder (MVP)
 
 **Status:** S1 initial implementation; local tests runnable offline. **This is NOT a trading bot.**

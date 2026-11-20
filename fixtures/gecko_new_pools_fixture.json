@@ -1,0 +1,45 @@
+{
+  "data": [
+    {
+      "id": "solana_11111111111111111111111111111111",
+      "type": "pool",
+      "attributes": {
+        "address": "11111111111111111111111111111111",
+        "name": "DEMO / SOL",
+        "pool_created_at": "2026-11-20T08:00:00Z",
+        "base_token_price_usd": "0.00001375",
+        "reserve_in_usd": "15234.56",
+        "volume_usd": { "m5": "210.99", "h24": "10231.2" },
+        "transactions": { "m5": { "buys": 3, "sells": 1 } }
+      },
+      "relationships": {
+        "dex": { "data": { "id": "pumpswap" } },
+        "base_token": { "data": { "id": "solana_11111111111111111111111111111113" } },
+        "quote_token": { "data": { "id": "solana_So11111111111111111111111111111111111111112" } }
+      }
+    },
+    {
+      "id": "solana_11111111111111111111111111111112",
+      "type": "pool",
+      "attributes": {
+        "address": "11111111111111111111111111111112",
+        "name": "EXAMPLE / SOL",
+        "pool_created_at": "2026-11-20T08:04:00Z",
+        "base_token_price_usd": "0.00000000225",
+        "reserve_in_usd": "8400.1",
+        "volume_usd": { "m5": "41", "h24": "300" },
+        "transactions": { "m5": { "buys": 8, "sells": 6 } }
+      },
+      "relationships": {
+        "dex": { "data": { "id": "raydium" } },
+        "base_token": { "data": { "id": "solana_11111111111111111111111111111114" } },
+        "quote_token": { "data": { "id": "solana_So11111111111111111111111111111111111111112" } }
+      }
+    }
+  ],
+  "included": [
+    { "id": "solana_11111111111111111111111111111113", "type": "token", "attributes": { "address": "11111111111111111111111111111113", "symbol": "DEMO" } },
+    { "id": "solana_11111111111111111111111111111114", "type": "token", "attributes": { "address": "11111111111111111111111111111114", "symbol": "EXAMPLE" } },
+    { "id": "solana_So11111111111111111111111111111111111111112", "type": "token", "attributes": { "address": "So11111111111111111111111111111111111111112", "symbol": "SOL" } }
+  ]
+}

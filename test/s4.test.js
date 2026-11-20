@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import {EventEmitter} from 'node:events';
 import {ROLES,ROLE_NAMES,sanitizeResearchContext,validateDecision,createPrompt} from '../src/s4/policy.js';
-import {createRunPlan,codexChildEnv,parseRoleSelection,executeS4} from '../src/s4/orchestrator.js';
+import {createRunPlan,codexChildEnv,parseRoleSelection,executeS4,assertChatGPTLogin} from '../src/s4/orchestrator.js';
 const raw={source:'solaris_s4_context_v1',collected_at:'2026-11-20T10:00:00Z',
  pools:[{pool_address:'Pool123',base_mint:'Mint123',venue_family:'pumpfun',
   first_seen_at:'2026-11-20T09:30:00Z',last_seen_at:'2026-11-20T09:40:00Z',
@@ -130,4 +131,27 @@ test('invalid agent recommendations fail closed with auditable errors',async()=>
   assert.equal(r.results[0].status,'AGENT_ERROR');
   assert.equal(r.economicsAuthorized,false);
  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+function fakeLogin(status,exitCode=0){
+ return (command,args)=>{
+  assert.equal(command,'codex'); assert.deepEqual(args,['login','status']);
+  const child=new EventEmitter();
+  child.stdout=new EventEmitter();child.stderr=new EventEmitter();
+  child.kill=()=>{};
+  queueMicrotask(()=>{child.stdout.emit('data',Buffer.from(status));child.emit('close',exitCode)});
+  return child;
+ };
+}
+test('ChatGPT Codex CLI authentication passes preflight',async()=>{
+ assert.equal(await assertChatGPTLogin({spawnImpl:fakeLogin('Logged in using ChatGPT'),
+  env:{PATH:'/bin',HOME:'/tmp'}}),true);
+});
+test('API key authentication is rejected before ANY model call',async()=>{
+ await assert.rejects(()=>assertChatGPTLogin({spawnImpl:fakeLogin('Logged in using an API key'),
+  env:{PATH:'/bin',HOME:'/tmp'}}),/codex_chatgpt_login_required/);
+});
+test('Codex auth missing fails closed',async()=>{
+ await assert.rejects(()=>assertChatGPTLogin({spawnImpl:fakeLogin('Not logged in',1),
+  env:{PATH:'/bin',HOME:'/tmp'}}),/codex_login_not_available/);
 });

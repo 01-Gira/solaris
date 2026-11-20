@@ -53,6 +53,6 @@ export class SolanaRpc {
   }
   getSignatures(address, opts) { return this.call('getSignaturesForAddress', [address, { commitment: 'finalized', ...opts }]); }
   getTransaction(signature) {
-    return this.call('getTransaction', [signature, { encoding: 'jsonParsed', commitment: 'finalized', maxSupportedTransactionVersion: 0 }]);
+    return this.call('getTransaction', [signature, { encoding: 'jsonParsed', commitment: 'finalized', maxSupportedTransactionVersion: 1 }]);
   }
 }

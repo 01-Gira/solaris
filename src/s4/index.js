@@ -1,7 +1,8 @@
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {createRunPlan,executeS4,parseRoleSelection} from './orchestrator.js';
-if(import.meta.url===new URL('file://'+process.argv[1]).href){
+if(process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href){
  let contextFile=null,roleText=null;
  for(let i=2;i<process.argv.length;i++){
   if(process.argv[i]==='--context'){contextFile=process.argv[++i];continue;}

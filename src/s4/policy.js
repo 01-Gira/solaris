@@ -25,8 +25,8 @@ export const RESPONSE_SCHEMA={
   'next_research_step','economics_authorized']
 };
 const safeText=(value,max)=>typeof value==='string'?value.slice(0,max):'';
-const finite=(value)=>{const n=Number(value);return Number.isFinite(n)?n:null;};
-const iso=(value)=>{const d=new Date(value);return Number.isFinite(d.valueOf())?d.toISOString():null;};
+const finite=(value)=>{if(value===null||value===undefined||value==='')return null;const n=Number(value);return Number.isFinite(n)?n:null;};
+const iso=(value)=>{if(value===null||value===undefined||value==='')return null;const d=new Date(value);return Number.isFinite(d.valueOf())?d.toISOString():null;};
 function safePool(p,i){
  return {
   evidence_id:'pool:'+i,

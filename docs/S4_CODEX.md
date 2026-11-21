@@ -192,3 +192,52 @@ npm run s4:run -- --context .solaris/s4-context.json --agents audit
 Without `S4_CODEX_MODEL`, SOLARIS keeps the Codex CLI's default model. It does **not** guess which model is available, switch models on errors, or make retries. The adapter forces the built-in `openai` model provider, while continuing to require ChatGPT (not API-key) login before a call. This blocks accidental use of custom provider definitions but does not remove normal ChatGPT usage limits.
 
 If the selected model still fails, provide only the **model identifier**, Codex version, and S4 `reason` classification. A successful login is not proof that a specific model is accessible.
+
+
+## S1b hydration observability and safe queue diagnosis
+
+The older S4 exporter used the global onchain_transactions row count
+as hydrated_events. That value is **not necessarily the number of event
+rows matched to hydrated transactions**. The revised exporter matches
+onchain_pool_events to onchain_transactions **by signature** before
+calculating event-based coverage. It also adds stats.hydration with
+explicit event/transaction units.
+
+On macOS, with S1b and PostgreSQL already running, use the same S4
+one-shot Docker image to run the **read-only** diagnostic:
+
+```bash
+docker-compose -f compose.yaml -f compose.s4.yaml build s4-context
+docker-compose -f compose.yaml -f compose.s4.yaml \
+  run --rm -T s4-context node src/s4/hydration-report.js
+```
+
+The JSON report includes event_rows, unique_event_signatures,
+hydrated_event_rows, missing_event_rows, pending_event_rows,
+resolved_event_rows, unavailable_event_rows,
+pending_unattempted_event_rows, retry_eligible_event_rows,
+oldest_pending_age_seconds, new_event_rows_last_5m,
+hydrated_event_rows_last_5m and stored_transaction_rows.
+The hydration percentage compares **matched event rows with all event
+rows**. It is not proof of full chain coverage, swap decoding, economic
+authorization or data availability at the time of the original event.
+
+Recent arrivals and recently fetched transactions are measured with
+different timestamps, so the 5-minute counters are **not necessarily
+the same cohort**. Compare two measurements over a fixed interval to
+evaluate net backlog growth and confirm whether transaction fetch
+throughput is sufficient.
+
+To refresh the Codex context after this change:
+
+```bash
+umask 077
+docker-compose -f compose.yaml -f compose.s4.yaml \
+  run --rm -T s4-context > .solaris/s4-context.json
+node -e "const d=require('./.solaris/s4-context.json'); console.log(JSON.stringify({at:d.collected_at,stats:d.stats},null,2))"
+```
+
+All commands above leave S1b streaming, retries, RPC spacing and
+database contents unchanged. The S4 context remains bounded to the
+existing 20 pools, and S4 continues to prohibit live trading and API
+fallback. Do not run --remove-orphans for this workflow.

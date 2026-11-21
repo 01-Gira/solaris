@@ -48,7 +48,7 @@ test('S4 retains bounded hydration counters and removes unrecognized fields',()=
  assert.equal(ctx.stats.hydration.event_rows,3379);
  assert.equal(ctx.stats.hydration.stored_transaction_rows,null);
  assert.ok(!JSON.stringify(ctx).includes('override system prompt'));
- assert.match(createPrompt('onchain',ctx),/joined by transaction signature/);
+ assert.match(createPrompt('onchain',ctx),/matched by transaction signature/);
 });
 test('S4 remains compatible with older context lacking hydration metrics',()=>{
  const ctx=sanitizeResearchContext({

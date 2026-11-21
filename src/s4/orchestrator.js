@@ -62,6 +62,29 @@ export async function assertChatGPTLogin({spawnImpl=spawn,env=process.env}={}){
  return true;
 }
 
+// Classify CLI stderr without ever exposing the raw output: it may contain auth
+// metadata, local paths, model output, or private account details.
+export function classifyCodexFailure(output=''){
+ const text=String(output).slice(-16384).toLowerCase();
+ if(/unexpected argument|unrecognized option|unknown option|invalid value for|found argument .*wasn't expected|usage: codex/.test(text))
+  return 'CLI_ARGUMENT_OR_VERSION';
+ if(/output.schema|json.schema|schema validation|invalid schema|unsupported schema|response format/.test(text))
+  return 'STRUCTURED_OUTPUT_SCHEMA';
+ if(/usage limit|quota|rate.limit|too many requests|exceeded your|error 429|status.?429/.test(text))
+  return 'CHATGPT_USAGE_OR_RATE_LIMIT';
+ if(/token_invalidated|authentication|not logged in|login required|sign.in|unauthorized|status.?401|error 401|invalid.*token|refresh.token|access.denied|status.?403/.test(text))
+  return 'CODEX_AUTH_OR_ACCESS';
+ if(/model.*(not found|not available|does not exist|unsupported|access)|unsupported model|unknown model/.test(text))
+  return 'MODEL_NOT_AVAILABLE';
+ if(/permission denied|operation not permitted|sandbox|eacces|eperm/.test(text))
+  return 'LOCAL_SANDBOX_OR_PERMISSION';
+ if(/config.toml|failed to parse config|invalid config|model_provider|config error/.test(text))
+  return 'CODEX_LOCAL_CONFIGURATION';
+ if(/certificate|tls|dns|proxy|network|connection refused|connection reset|unable to connect|fetch failed|timed out/.test(text))
+  return 'NETWORK_OR_TLS';
+ return 'UNCLASSIFIED';
+}
+
 export function parseRoleSelection(input){
  if(!input)return [...ROLE_NAMES];
  const roles=input.split(',').map(x=>x.trim());
@@ -86,11 +109,13 @@ export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=12
   const outcome=await new Promise((resolve,reject)=>{
    const child=spawnImpl('codex',args,{
     cwd:workspace,env:codexChildEnv(env),stdio:['pipe','pipe','pipe']});
-   let outputBytes=0,terminated=false;
+   let outputBytes=0,terminated=false,diagnosticOutput='';
    const timer=setTimeout(()=>{terminated=true;child.kill('SIGKILL');},timeoutMs);
-   // Discard stdout/stderr; do not persist user data or CLI auth warnings.
+   // Read only for bounded, allowlisted *error classification*. Never print,
+   // persist, or return raw Codex output: it may contain secrets/local paths.
    const drain=chunk=>{
     outputBytes+=chunk.length;
+    diagnosticOutput=(diagnosticOutput+chunk.toString('utf8')).slice(-16384);
     if(outputBytes>1024*1024){terminated=true;child.kill('SIGKILL');}
    };
    child.stdout?.on('data',drain);child.stderr?.on('data',drain);
@@ -98,7 +123,7 @@ export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=12
    child.on('close',code=>{
     clearTimeout(timer);
     if(terminated)reject(new Error('codex_timeout_or_output_limit'));
-    else if(code!==0)reject(new Error('codex_exited_nonzero:'+code));
+    else if(code!==0)reject(new Error('codex_exited_nonzero:'+code+':'+classifyCodexFailure(diagnosticOutput)));
     else resolve(true);
    });
    child.stdin?.on('error',()=>{});

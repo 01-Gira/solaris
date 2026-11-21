@@ -595,3 +595,88 @@ test('an archive witness that is independently sealed after the admission deadli
  assert.equal(report.windows.development.launchUniverse.conflictingOutcomes,0);
  assert.equal(report.launchDrafts[0].reason,'missing_timely_launch_evidence');
 });
+
+async function launchBoundaries(t,{gap,invalidAnchor=false,unsealedAnchor=false}={}){
+ const {dir}=await tempStore(t),{policy}=settings();
+ const start=Date.parse('2026-09-01T00:00:00Z'),joinAt=start+30*DAY,end=joinAt+30*DAY;
+ const plan={version:VERSION,policy:policy.digest,study:'boundary-fixture',strategy:PROOF,selection:PROOF,feeModel:PROOF,
+  exclusions:PROOF,maxQuoteAgeMs:5000,maxObservedLatencyMs:1000,horizonMs:1000,universe:launchRule,
+  windows:{development:{from:iso(start),until:iso(joinAt)},forward:{from:iso(joinAt),until:iso(end)}}};
+ await append(dir,fixtureProof);
+ const manifest=await append(dir,manifestRecord(plan,policy));
+ const add=(kind,issuer,body)=>append(dir,signed(policy,kind,issuer,body));
+ await add('timestamp','clock',{subject:manifest,at:iso(start-10000)});
+ const atStart=poolFixture('at-development-start',{quoteMint:quoteAsset});
+ // Same mint as the first study launch. The anchor must not reserve it.
+ const pre=poolFixture('before-development',{quoteMint:quoteAsset,baseMint:atStart.p.baseMint});
+ const atJoin=poolFixture('at-window-join',{quoteMint:quoteAsset});
+ const postJoin=poolFixture('after-development',{quoteMint:quoteAsset});
+ const atEnd=poolFixture('at-forward-end',{quoteMint:quoteAsset});
+ const postEnd=poolFixture('after-forward',{quoteMint:quoteAsset});
+ const omitted=poolFixture('omitted-in-window',{quoteMint:quoteAsset});
+ const before=block(1,0,start-500,[receipt(pre.tx)]),opening=block(2,1,start,[receipt(atStart.tx)]);
+ const gapStart=block(3,2,start+2000),gapBlock=gap==='unavailable'?block(4,3,start+2500):null;
+ const gapEnd=block(5,gapBlock?.slot??3,start+3000,gap==='omitted'?[receipt(omitted.tx)]:[]);
+ const joint=block(6,5,joinAt,[receipt(atJoin.tx)]),next=block(7,6,joinAt+500,[receipt(postJoin.tx)]);
+ const closing=block(8,7,end,[receipt(atEnd.tx)]),after=block(9,8,end+500,[receipt(postEnd.tx)]);
+ async function certify(rows,inventory,windows){
+  const segment=buildSegment(genesis,rows.map(blockIdentity));
+  for(const issuer of ['alpha','beta']){
+   await sealLaunchArchive(add,'segment',issuer,segment.body);
+   for(const [index,row] of rows.entries())await sealLaunchArchive(add,'block',issuer,{...row,membership:[segment.proof(index)]},
+    {omit:unsealedAnchor&&row===before&&issuer==='beta'});
+  }
+  for(const window of windows)await certifyLaunchScan(add,manifest,window,segment,inventory);
+ }
+ const anchor=launchRef(before,pre);
+ if(invalidAnchor)anchor.blockhash=address('unconfirmed-anchor-claim');
+ await certify([before,opening],[anchor,launchRef(opening,atStart)],['development']);
+ await certify([gapStart,...gapBlock?[gapBlock]:[],gapEnd],gapBlock?[{status:'unavailable',slot:4}]:[],['development','forward']);
+ await certify([joint,next],[launchRef(joint,atJoin),launchRef(next,postJoin)],['development','forward']);
+ await certify([closing,after],[launchRef(closing,atEnd),launchRef(after,postEnd)],['forward']);
+ for(const [row,item] of [[opening,atStart],[joint,atJoin],[next,postJoin]]){
+  const time=Date.parse(row.blockTime);
+  const proof=await add('pool','history',{...item.p,creation:ref(row,item.tx),fromSlot:row.slot,untilSlot:100});
+  await add('timestamp','clock',{subject:proof,at:iso(time+100)});
+  const subject=await add('discovery','discover',{plan:manifest,launch:hash(launchRef(row,item)),status:'observed',
+   observedAt:iso(time+150),evidenceDigest:PROOF});
+  await add('timestamp','clock',{subject,at:iso(time+200)});
+ }
+ const inspect=at=>qualifyForward(dir,policy,{manifest,asOf:iso(at),includeLaunchDrafts:true});
+ for(const time of [start+500,joinAt+1000]){
+  const preview=await inspect(time);
+  for(const draft of preview.launchDrafts.filter(row=>row.result==='admitted')){
+   const subject=await add('launch_outcome','enroll',draft);
+   await add('timestamp','clock',{subject,at:iso(time+50)});
+  }
+ }
+ return {report:await inspect(end+10000),excluded:[hash(launchRef(before,pre)),hash(launchRef(closing,atEnd)),hash(launchRef(after,postEnd))]};
+}
+
+test('boundary launches stay auditable without competing with study members or poisoning certified prefixes',async t=>{
+ const {report,excluded}=await launchBoundaries(t);
+ const dev=report.windows.development,forward=report.windows.forward;
+ assert.equal(dev.launchUniverse.completePrefix,true);
+ assert.equal(forward.launchUniverse.completePrefix,true);
+ assert.equal(dev.gates.prospectiveLaunchUniverse,'PASS');
+ assert.equal(forward.gates.prospectiveLaunchUniverse,'PASS');
+ assert.equal(dev.launchUniverse.admitted,1,'inclusive development opening and no anchor mint reservation');
+ assert.equal(forward.launchUniverse.admitted,2,'development end belongs only to forward');
+ assert.deepEqual(dev.launchUniverse.outsideWindow,{beforeStart:1,atOrAfterEnd:2});
+ assert.deepEqual(forward.launchUniverse.outsideWindow,{beforeStart:0,atOrAfterEnd:2});
+ assert.ok(report.launchDrafts.every(row=>!excluded.includes(row.launch)));
+ assert.deepEqual(report.overlaps,{signatures:0,decisionIds:0,pools:0,baseMints:0});
+});
+
+test('boundary scoping never clears an unavailable or omitted in-window launch or an unverified anchor claim',async t=>{
+ for(const [options,reason] of [[{gap:'unavailable'},'launch_unavailable'],[{gap:'omitted'},null],
+  [{invalidAnchor:true},'creation_receipt_unverified'],[{unsealedAnchor:true},'unsealed_finalized_creation']]){
+  const {report}=await launchBoundaries(t,options);
+  const dev=report.windows.development,forward=report.windows.forward;
+  assert.equal(dev.launchUniverse.completePrefix,false);
+  assert.equal(dev.gates.prospectiveLaunchUniverse,'BLOCKED');
+  assert.equal(forward.launchUniverse.admitted,0);
+  if(reason)assert.equal(dev.launchUniverse.byEvidenceGap[reason],1);
+  else assert.equal(dev.launchUniverse.omittedWitnessedLaunches,1);
+ }
+});

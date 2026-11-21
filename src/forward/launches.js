@@ -88,8 +88,8 @@ function witnessedLaunches(blocks,venues){
 function verifyLaunch(row,segment,window,context){
  if(isGap(row))return {reason:`launch_${row.status}`};
  const {blocks,poolByCreation}=context,block=blocks.get(row.slot);
- const time=stamp(block?.blockTime);
- if(!included(block,segment)||time<window.start||time>=window.end)return {reason:'launch_block_or_window_unverified'};
+ if(!included(block,segment))return {reason:'launch_block_or_window_unverified'};
+ const time=stamp(block.blockTime);
  const receipt=confirmedReceipt(blocks,row),ix=invocation(receipt,row),identity=creationIdentity(ix);
  if(!identity||identity.venue!==row.venue||identity.address!==row.address||identity.baseMint!==row.baseMint||
   (identity.quoteMint===undefined?row.quoteMint!==WSOL&&!ix.accounts.includes(row.quoteMint):identity.quoteMint!==row.quoteMint)||
@@ -97,6 +97,10 @@ function verifyLaunch(row,segment,window,context){
  const order=block.roster.indexOf(row.signature);
  const archive=clockedQuorum(receipt.witnesses,time,context);
  if(!archive)return {time,order,reason:'unsealed_finalized_creation'};
+ // Certified boundary segments can include audited receipts outside the study interval.
+ // They do not require pool-state proofs or participate in admission timing or reservations.
+ if(time<window.start)return {outsideWindow:'beforeStart'};
+ if(time>=window.end)return {outsideWindow:'atOrAfterEnd'};
  if(row.status==='failed')return {time,order,archive};
  const proofs=(poolByCreation.get(identityKey(row))??[]).filter(proof=>proof.body.creation.blockhash===row.blockhash&&
   ['venue','address','baseMint','quoteMint'].every(key=>proof.body[key]===row[key]));
@@ -195,7 +199,7 @@ export function evaluateLaunches(context){
   const start=first>0&&stamp(ordered[first].firstTime)>=window.start?first-1:first;
   const chosen=first<0?[]:ordered.slice(start,end+1);
   const scans=groupBy(context.scans.filter(x=>x.body.window===name),x=>x.body.segment);
-  const scanSegments=new Set(),admitted=[],byReason={},byEvidenceGap={};
+  const scanSegments=new Set(),admitted=[],byReason={},byEvidenceGap={},outsideWindow={beforeStart:0,atOrAfterEnd:0};
   let missingScans=0,unverifiedLaunches=0,missingOutcomes=0,conflictingOutcomes=0,pending=0,omitted=0,lateDiscoveryEvidence=0;
   let prefix={complete:context.frozen&&stamp(chosen[0]?.firstTime)!==null&&stamp(chosen[0].firstTime)<window.start,at:0};
   if(name==='forward'){
@@ -217,7 +221,12 @@ export function evaluateLaunches(context){
     const missing=entry.launches.filter(key=>!launched.has(key)).length;
     if(missing){prefix.complete=false;omitted+=missing;}
    }
-   const validated=scan.launches.map(([launch,row])=>({launch,row,verified:verifyLaunch(row,segment,window,indexes)}));
+   const validated=[];
+   for(const [launch,row] of scan.launches){
+    const verified=verifyLaunch(row,segment,window,indexes);
+    if(verified.outsideWindow)outsideWindow[verified.outsideWindow]++;
+    else validated.push({launch,row,verified});
+   }
    if(validated.some(x=>x.verified.reason))prefix.complete=false;
    for(const {verified} of validated)prefix.at=Math.max(prefix.at,verified.archive?.at??0,verified.proofs?.[0]?.at??0);
    validated.sort((a,b)=>a.row.slot-b.row.slot||(a.verified.order??0)-(b.verified.order??0)||
@@ -238,7 +247,7 @@ export function evaluateLaunches(context){
   const completePrefix=prefix.complete&&asOf>=window.end&&stamp(parent?.lastTime)!==null&&stamp(parent.lastTime)>=window.end;
   result[name]={admitted,scanSegments,segments:chosen,prefixAt:prefix.at,completePrefix,
    complete:completePrefix&&!omitted&&!missingOutcomes&&!conflictingOutcomes&&!pending,
-   summary:{admitted:admitted.length,byReason,byEvidenceGap,missingScanQuorums:missingScans,omittedWitnessedLaunches:omitted,
+   summary:{admitted:admitted.length,outsideWindow,byReason,byEvidenceGap,missingScanQuorums:missingScans,omittedWitnessedLaunches:omitted,
     unverifiedLaunches,missingOutcomeSeals:missingOutcomes,conflictingOutcomes,pending,lateDiscoveryEvidence,completePrefix}};
  }
  return {windows:result,drafts};

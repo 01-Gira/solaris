@@ -75,3 +75,7 @@ CREATE TABLE IF NOT EXISTS onchain_rpc_request_budget (
  provider_key TEXT PRIMARY KEY CHECK(length(provider_key)=64),
  next_allowed_at TIMESTAMPTZ NOT NULL
 );
+
+-- Hydration ownership mode is written only by the S1b stream process.
+-- Old stream releases ownership only when stopped; legacy defaults to inline.
+ALTER TABLE onchain_stream_health ADD COLUMN IF NOT EXISTS hydration_mode TEXT NOT NULL DEFAULT 'inline';

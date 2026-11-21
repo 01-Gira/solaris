@@ -54,6 +54,9 @@ export async function processTransactions(db, rpc, config) {
       if (!tx) throw new Error('getTransaction returned null (not indexed yet)');
       await saveTransaction(db, job.signature, tx);
     } catch (error) {
+      // DB coordination failure is NOT a Solana transaction failure. Never
+      // burn the transaction's retry budget when the shared pacer is down.
+      if(error?.code==='RPC_PACING_UNAVAILABLE')throw error;
       const result = await markTransactionRetry(db, job.signature, job.attempts,
         config.txMaxAttempts, shortError(error), error?.retryAfterMs || 0);
       if (result.exhausted) log('tx_unavailable', { signature: job.signature, attempts: result.nextAttempt, error: shortError(error) });

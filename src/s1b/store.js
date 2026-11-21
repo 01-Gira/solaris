@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { extractTokenBalanceChanges } from './parse.js';
+import { extractTokenBalanceChanges, validSignature } from './parse.js';
 
 export async function migrateS1b(db) {
   await db.query(await readFile(new URL('./schema.sql', import.meta.url), 'utf8'));
@@ -62,18 +62,26 @@ export async function pendingSignatures(db, limit) {
 }
 
 export async function saveTransaction(db, signature, tx) {
-  if (!tx || !Number.isSafeInteger(tx.slot) || tx.slot < 0 || !tx.meta) throw new Error('Incomplete RPC transaction response');
+  const message=tx?.transaction?.message,meta=tx?.meta;
+  const blockTime=tx?.blockTime==null?null:new Date(tx.blockTime*1000);
+  if (!Number.isSafeInteger(tx?.slot) || tx.slot < 0 || !validSignature(signature) ||
+      !Array.isArray(tx.transaction?.signatures) || tx.transaction.signatures[0]!==signature ||
+      !Array.isArray(message?.instructions) || !Array.isArray(message?.accountKeys) ||
+      meta?.err===undefined || (meta.err!==null && typeof meta.err!=='string' &&
+       (typeof meta.err!=='object' || Array.isArray(meta.err))) ||
+      !Number.isSafeInteger(meta.fee) || meta.fee<0 ||
+      (blockTime!==null && (!Number.isSafeInteger(tx.blockTime) || !Number.isFinite(blockTime.getTime()))))
+    throw new Error('Incomplete RPC transaction response');
   const changes = extractTokenBalanceChanges(tx);
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`INSERT INTO onchain_transactions
+    const inserted=await client.query(`INSERT INTO onchain_transactions
       (signature,slot,block_time,tx_error,fee_lamports,payload)
       VALUES($1,$2,$3,$4::jsonb,$5,$6::jsonb)
       ON CONFLICT(signature) DO NOTHING`,
-    [signature, tx.slot, Number.isSafeInteger(tx.blockTime) ? new Date(tx.blockTime * 1000) : null,
-      JSON.stringify(tx.meta.err ?? null), tx.meta.fee ?? null, JSON.stringify(tx)]);
-    for (const b of changes) {
+    [signature, tx.slot, blockTime, JSON.stringify(meta.err), meta.fee, JSON.stringify(tx)]);
+    for (const b of inserted.rowCount===1?changes:[]) {
       await client.query(`INSERT INTO onchain_token_balance_changes
         (signature,account_index,mint,owner,program_id,decimals,pre_amount,post_amount,delta_raw)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,

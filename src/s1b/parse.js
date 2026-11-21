@@ -36,26 +36,27 @@ export function parseSignatureHistory(rows, poolAddress) {
 // These are raw SPL token account balance changes, not swaps, wallet trades, or USD prices.
 export function extractTokenBalanceChanges(tx) {
   const meta = tx?.meta;
-  if (!meta) return [];
-  const lookup = new Map();
-  const ingest = (rows, side) => {
-    for (const b of Array.isArray(rows) ? rows : []) {
-      if (!Number.isSafeInteger(b?.accountIndex) || b.accountIndex < 0 || !validPubkey(b?.mint)) continue;
-      const amount = b?.uiTokenAmount?.amount;
-      if (typeof amount !== 'string' || !/^\d+$/.test(amount)) continue;
-      const key = `${b.accountIndex}:${b.mint}`;
-      const existing = lookup.get(key) || {
-        accountIndex: b.accountIndex, mint: b.mint, owner: null,
-        programId: null, decimals: null, pre: '0', post: '0'
-      };
-      if (typeof b.owner === 'string' && validPubkey(b.owner)) existing.owner = b.owner;
-      if (typeof b.programId === 'string' && validPubkey(b.programId)) existing.programId = b.programId;
-      if (Number.isInteger(b.uiTokenAmount.decimals)) existing.decimals = b.uiTokenAmount.decimals;
-      existing[side] = amount;
-      lookup.set(key, existing);
+  if (!Array.isArray(meta?.preTokenBalances) || !Array.isArray(meta.postTokenBalances)) return [];
+  const keys=tx.transaction?.message?.accountKeys;
+  const indexed = rows => {
+    const lookup=new Map();
+    for (const b of rows) {
+      if (!Number.isInteger(b?.accountIndex) || b.accountIndex < 0 || b.accountIndex > 255 ||
+          (Array.isArray(keys)&&b.accountIndex>=keys.length)) continue;
+      lookup.set(b.accountIndex,lookup.has(b.accountIndex)?null:b);
     }
+    return lookup;
   };
-  ingest(meta.preTokenBalances, 'pre');
-  ingest(meta.postTokenBalances, 'post');
-  return [...lookup.values()].map(x => ({ ...x, deltaRaw: (BigInt(x.post) - BigInt(x.pre)).toString() }));
+  const after=indexed(meta.postTokenBalances);
+  const amount=value=>typeof value==='string'&&/^\d{1,20}$/.test(value)&&BigInt(value)<(1n<<64n);
+  return [...indexed(meta.preTokenBalances)].flatMap(([accountIndex,p])=>{
+    const q=after.get(accountIndex);
+    if (!p || !q || !validPubkey(p.mint) || p.mint!==q.mint || p.owner!==q.owner || p.programId!==q.programId) return [];
+    const pre=p.uiTokenAmount?.amount,post=q.uiTokenAmount?.amount,decimals=p.uiTokenAmount?.decimals;
+    if (!amount(pre) || !amount(post) || !Number.isInteger(decimals) || decimals<0 || decimals>255 ||
+        decimals!==q.uiTokenAmount?.decimals) return [];
+    return [{accountIndex,mint:p.mint,owner:validPubkey(p.owner)?p.owner:null,
+      programId:validPubkey(p.programId)?p.programId:null,decimals,pre,post,
+      deltaRaw:(BigInt(post)-BigInt(pre)).toString()}];
+  });
 }

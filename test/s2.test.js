@@ -60,6 +60,12 @@ test('Token-2022 transfer hook is flagged as high concern',()=>{
  const r=assessPoolRisk({pool,snapshots,mintProof:proof,now:NOW});
  assert.equal(r.riskBand,'reject'); assert.ok(r.reasons.includes('sensitive_token_extensions_present'));
 });
+test('canonical Token-2022 program is recognized independently of the exported constant',()=>{
+ const proof=parseMintProof({owner:'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',data:{parsed:{type:'mint',
+ info:{decimals:9,supply:'100',mintAuthority:null,freezeAuthority:null,extensions:['transferFeeConfig']}}}},'MintA',NOW);
+ assert.equal(proof.status,'verified_structure_only');
+ assert.equal(assessPoolRisk({pool,snapshots,mintProof:proof,now:NOW}).riskBand,'reject');
+});
 test('zero observations cannot be certified',()=>{
  const r=assessPoolRisk({pool,snapshots:[],mintProof:parseMintProof(mint(),'MintA',NOW),now:NOW});
  assert.equal(r.riskBand,'unknown');assert.equal(r.tradability,'blocked');

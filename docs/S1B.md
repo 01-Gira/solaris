@@ -83,3 +83,5 @@ After starting the patched `stream` image, check `tx_status`, `tx_attempts`, and
 6. **Survivorship coverage**: track which pools were selected, when, and which events remain unobserved; S1a newest-pages are not an exhaustive pool universe.
 
 Docs: https://solana.com/docs/rpc/websocket/logssubscribe , https://solana.com/docs/rpc/http/gettransaction , https://solana.com/docs/rpc/http/getsignaturesforaddress
+
+Derived token-account deltas require comparable pre/post amounts and account metadata. Missing sides stay unknown. Use the saved RPC payload for lifecycle and instruction reconciliation. The qualification runbook is [here](RESEARCH_QUALIFICATION.md).

@@ -2,6 +2,7 @@
 // full transaction payloads, WALLET private keys, raw provider responses or credentials.
 import pg from 'pg';
 import {sanitizeResearchContext} from './policy.js';
+import {fetchHydrationMetrics} from './hydration-metrics.js';
 if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL required');
 const db=new pg.Client({connectionString:process.env.DATABASE_URL,connectionTimeoutMillis:10000});
 async function optional(sql,fallback){
@@ -25,14 +26,25 @@ try{
   'ORDER BY first_seen_at DESC LIMIT 20'
  ].join(' '),[]);
  const counters={
-  observed_pools:'pools',total_events:'onchain_pool_events',
-  hydrated_events:'onchain_transactions',decoded_events:'onchain_trade_decodes',
+  observed_pools:'pools',decoded_events:'onchain_trade_decodes',
   s2_assessed_pools:'s2_pool_assessments'
  };
  const stats={};
  for(const [name,table] of Object.entries(counters)){
   const rows=await optional('SELECT COUNT(*)::int AS n FROM '+table,[{n:null}]);
   stats[name]=rows[0]?.n??null;
+ }
+ // Signature-matched coverage is distinct from global transaction row counts.
+ const hydration=await optional('SELECT 1 FROM onchain_pool_events LIMIT 0',null)===null
+  ? null : await fetchHydrationMetrics(db);
+ if(hydration){
+  stats.total_events=hydration.event_rows;
+  stats.hydrated_events=hydration.hydrated_event_rows;
+  stats.hydration=hydration;
+ }else{
+  stats.total_events=null;
+  stats.hydrated_events=null;
+  stats.hydration=null;
  }
  const s3Rows=await optional(
   'SELECT mode,status,economics_authorized,report FROM s3_research_runs ORDER BY id DESC LIMIT 1',[]);

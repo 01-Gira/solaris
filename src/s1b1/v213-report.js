@@ -17,7 +17,7 @@ export async function runV213(db,{limit=1000}={}){
    SELECT e.pool_address,
      COUNT(*)::bigint AS historical_event_rows,
      COUNT(*) FILTER (WHERE t.tx_error IS NOT NULL)::bigint AS failed_onchain_rows,
-     COUNT(*) FILTER (WHERE t.tx_error IS NULL)::bigint AS single_candidate_rows,
+     COUNT(*) FILTER (WHERE t.tx_error IS NULL)::bigint AS successful_tx_event_rows,
      MIN(t.block_time) AS earliest_historical_block,
      MAX(t.block_time) AS latest_historical_block
    FROM onchain_pool_events e
@@ -39,7 +39,7 @@ export async function runV213(db,{limit=1000}={}){
    GROUP BY s.pool_address
   )
   SELECT h.pool_address,h.historical_event_rows,h.failed_onchain_rows,
-   h.single_candidate_rows,h.earliest_historical_block,h.latest_historical_block,
+   h.successful_tx_event_rows,h.earliest_historical_block,h.latest_historical_block,
    p.pool_created_at AS current_provider_created,
    p.first_seen_at AS pool_first_seen_at,
    COALESCE(s.snapshot_count,0) AS snapshot_count,

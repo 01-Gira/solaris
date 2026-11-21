@@ -10,6 +10,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: solaris_fixture
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd 'pg_isready -U postgres -d solaris_fixture'
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,4 +30,6 @@ jobs:
           node-version: '22'
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm test
+        env:
+          SOLARIS_FIXTURE_DATABASE_URL: postgres://postgres@127.0.0.1:${{ job.services.postgres.ports[5432] }}/solaris_fixture
       - run: npm run check

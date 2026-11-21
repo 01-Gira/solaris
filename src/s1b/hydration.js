@@ -43,6 +43,7 @@ export async function runDetachedHydration(db,config,signal,{rpcFactory}={}){
    // Check the *same* connection still holds a live session. If it fails,
    // terminate; PostgreSQL will release the session advisory lock.
    await owner.query('SELECT 1');
+   if(signal.aborted)break;
    const ready=await streamReadyForExternalHydration(db);
    if(!ready){
     if(Date.now()-lastWaitLog>30000){report('waiting_for_external_stream');lastWaitLog=Date.now();}

@@ -27,9 +27,12 @@ export async function runDetachedHydration(db,config,signal,{rpcFactory}={}){
  const owner=await db.connect();
  let locked=false;
  try{
-  const lock=await owner.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired',[LEASE_KEY]);
-  locked=lock.rows[0]?.acquired===true;
-  if(!locked){report('already_owned');return {status:'ALREADY_OWNED'};}
+  while(!signal.aborted && !locked){
+   const lock=await owner.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired',[LEASE_KEY]);
+   locked=lock.rows[0]?.acquired===true;
+   if(!locked){report('waiting_for_lease');await sleep(10000);}
+  }
+  if(signal.aborted)return {status:'STOPPED_BEFORE_LEASE'};
   report('lease_acquired',{rpcSpacingMs:config.rpcSpacingMs,txBatchSize:config.txBatchSize});
   const pacer=new SharedRpcPacer(db,config.httpUrl,{spacingMs:config.rpcSpacingMs});
   const rpc=rpcFactory?rpcFactory(pacer):new SolanaRpc(config.httpUrl,{

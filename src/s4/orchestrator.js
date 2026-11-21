@@ -19,6 +19,9 @@ export function createRunPlan(env=process.env,roles=ROLE_NAMES){
  const dry=env.S4_DRY_RUN!=='0';
  const enabled=env.S4_CODEX_ENABLED==='1';
  if(!dry&&!enabled)throw new Error('codex_enable_flag_required');
+ const model=env.S4_CODEX_MODEL||null;
+ if(model!==null && !/^[a-z][a-z0-9._-]{1,63}$/.test(model))
+  throw new Error('S4_CODEX_MODEL must be a safe explicit Codex model identifier');
  const outputMode=env.S4_CODEX_OUTPUT_MODE||'structured';
  if(!['structured','validated_json'].includes(outputMode))
   throw new Error('S4_CODEX_OUTPUT_MODE must be structured or validated_json');
@@ -26,7 +29,7 @@ export function createRunPlan(env=process.env,roles=ROLE_NAMES){
  if(!Number.isInteger(timeout)||timeout<15000||timeout>300000)
   throw new Error('S4_TIMEOUT_MS must be 15000..300000');
  return {backend:'codex',dryRun:dry,enabled,
-  roles,timeoutMs:timeout,outputMode,maxCalls:dry?0:roles.length,concurrency:1,
+  roles,timeoutMs:timeout,outputMode,model,maxCalls:dry?0:roles.length,concurrency:1,
   paidApiFallback:false,liveTrading:false,economicsAuthorized:false};
 }
 export function codexChildEnv(env=process.env){
@@ -97,10 +100,25 @@ export function parseRoleSelection(input){
   throw new Error('invalid_agent_roles');
  return roles;
 }
+export function buildCodexExecArgs({outputMode='structured',model=null,schemaPath,answerPath}){
+ if(!['structured','validated_json'].includes(outputMode))throw new Error('invalid_codex_output_mode');
+ if(model!==null && !/^[a-z][a-z0-9._-]{1,63}$/.test(model))
+  throw new Error('invalid_codex_model');
+ // Force built-in OpenAI provider. Login must also be ChatGPT, not an API key.
+ // CLI arguments are passed as an array (never shell evaluated).
+ return ['--ask-for-approval','never','-c','model_provider="openai"','exec',
+  '--sandbox','read-only','--skip-git-repo-check',
+  ...(model?['--model',model]:[]),
+  ...(outputMode==='structured'?['--output-schema',schemaPath]:[]),
+  '--output-last-message',answerPath,'-'];
+}
+
 export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=120000,outputMode='structured',
-  spawnImpl=spawn,env=process.env}){
+  model=null,spawnImpl=spawn,env=process.env}){
  if(!ROLE_NAMES.includes(role))throw new Error('invalid_role');
  if(!['structured','validated_json'].includes(outputMode))throw new Error('invalid_codex_output_mode');
+ if(model!==null && !/^[a-z][a-z0-9._-]{1,63}$/.test(model))
+  throw new Error('invalid_codex_model');
  await assertChatGPTLogin({spawnImpl,env});
  const workspace=await mkdtemp(path.join(os.tmpdir(),'solaris-s4-codex-'));
  const schemaPath=path.join(workspace,'schema.json');
@@ -112,10 +130,7 @@ export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=12
   // validated_json is manual opt-in, NOT an automatic retry/fallback.
   // Strict validateDecision is mandatory in both modes, so unconstrained
   // text can never become a trusted research decision or execution.
-  const args=['--ask-for-approval','never','exec','--sandbox','read-only',
-    '--skip-git-repo-check',
-    ...(outputMode==='structured'?['--output-schema',schemaPath]:[]),
-    '--output-last-message',answerPath,'-'];
+  const args=buildCodexExecArgs({outputMode,model,schemaPath,answerPath});
   const outcome=await new Promise((resolve,reject)=>{
    const child=spawnImpl('codex',args,{
     cwd:workspace,env:codexChildEnv(env),stdio:['pipe','pipe','pipe']});
@@ -166,7 +181,7 @@ export async function executeS4({context,plan,agentRunner=runCodexAgent,auditPat
    outcome={status:'DRY_RUN',role,reason:'codex_not_invoked'};
   }else{
    try{
-    const decision=await agentRunner({role,context:sanitized,priorDecisions:prior,timeoutMs:plan.timeoutMs,outputMode:plan.outputMode});
+    const decision=await agentRunner({role,context:sanitized,priorDecisions:prior,timeoutMs:plan.timeoutMs,outputMode:plan.outputMode,model:plan.model});
     // Revalidate at the trust boundary, even if the agent adapter was replaced.
     const validated=validateDecision(role,decision,sanitized);
     prior.push(validated);
@@ -189,7 +204,7 @@ export async function executeS4({context,plan,agentRunner=runCodexAgent,auditPat
    liveTrading:false,paidApiFallback:false});
  }
  return {runId,version:S4_VERSION,mode:plan.dryRun?'DRY_RUN':'CODEX_CHATGPT',
-  maxCalls:plan.maxCalls,outputMode:plan.outputMode,completed:results.filter(x=>x.status==='RESEARCH_ONLY').length,
+  maxCalls:plan.maxCalls,outputMode:plan.outputMode,modelOverride:plan.model||null,completed:results.filter(x=>x.status==='RESEARCH_ONLY').length,
   results,economicsAuthorized:false,liveTrading:false,paidApiFallback:false,
   contextSha256:contextHash,auditPath:audit};
 }

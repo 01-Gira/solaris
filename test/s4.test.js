@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {ROLES,ROLE_NAMES,sanitizeResearchContext,validateDecision,createPrompt} from '../src/s4/policy.js';
-import {createRunPlan,codexChildEnv,parseRoleSelection,executeS4,assertChatGPTLogin} from '../src/s4/orchestrator.js';
+import {createRunPlan,codexChildEnv,parseRoleSelection,executeS4,assertChatGPTLogin,buildCodexExecArgs} from '../src/s4/orchestrator.js';
 const raw={source:'solaris_s4_context_v1',collected_at:'2026-11-20T10:00:00Z',
  pools:[{pool_address:'Pool123',base_mint:'Mint123',venue_family:'pumpfun',
   first_seen_at:'2026-11-20T09:30:00Z',last_seen_at:'2026-11-20T09:40:00Z',
@@ -198,5 +198,37 @@ test('optional mode still rejects non-conforming outputs and records errors',asy
   assert.equal(r.results[0].status,'AGENT_ERROR');
   assert.equal(r.completed,0);assert.equal(r.economicsAuthorized,false);
   assert.equal(r.outputMode,'validated_json');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('explicit Codex model must be bounded and safe',()=>{
+ const p=createRunPlan({S4_DRY_RUN:'0',S4_CODEX_ENABLED:'1',S4_CODEX_MODEL:'gpt-5.3-codex'},['audit']);
+ assert.equal(p.model,'gpt-5.3-codex');
+ assert.equal(createRunPlan({}).model,null);
+ for(const invalid of ['', '&& curl bad', 'gpt-5.3-codex; touch /tmp/bad', 'OpenAI', 'x'.repeat(80)]){
+  if(invalid==='')continue;
+  assert.throws(()=>createRunPlan({S4_CODEX_MODEL:invalid}),/S4_CODEX_MODEL/);
+ }
+});
+test('model override goes to Codex exec only, not shell or API',()=>{
+ const args=buildCodexExecArgs({model:'gpt-5.3-codex',schemaPath:'/tmp/s.json',answerPath:'/tmp/a.json'});
+ assert.deepEqual(args.slice(args.indexOf('--model'),args.indexOf('--model')+2),['--model','gpt-5.3-codex']);
+ assert.equal(args.includes('exec'),true);
+ assert.equal(args.includes('model_provider="openai"'),true);
+ assert.equal(args.includes('--output-schema'),true);
+ assert.ok(!buildCodexExecArgs({model:null,schemaPath:'/tmp/s.json',answerPath:'/tmp/a.json'}).includes('--model'));
+ assert.ok(!buildCodexExecArgs({model:'gpt-5.3-codex',outputMode:'validated_json',answerPath:'/tmp/a.json'}).includes('--output-schema'));
+});
+test('one selected model is passed to agent runner; no fallback',async()=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'solaris-model-test-'));
+ try{
+  let chosen=null;
+  const p=createRunPlan({S4_DRY_RUN:'0',S4_CODEX_ENABLED:'1',S4_CODEX_MODEL:'gpt-5.3-codex'},['audit']);
+  const r=await executeS4({context:raw,plan:p,auditPath:path.join(dir,'audit.ndjson'),
+   agentRunner:async({model})=>{chosen=model;return decision('audit');}});
+  assert.equal(chosen,'gpt-5.3-codex');
+  assert.equal(r.modelOverride,chosen);
+  assert.equal(r.completed,1);
+  assert.equal(r.paidApiFallback,false);
  }finally{await rm(dir,{recursive:true,force:true});}
 });

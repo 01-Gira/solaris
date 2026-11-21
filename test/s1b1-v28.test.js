@@ -71,7 +71,7 @@ test('watched pool mismatch and duplicate candidate fail closed',()=>{
  assert.match(inspectV28('different-pool',sig,fixture()).status,/watched_pool_mismatch/);
  const t=fixture();
  t.transaction.message.instructions.push(t.transaction.message.instructions[2]);
- assert.match(inspectV28(pool,sig,t).status,/candidate_not_unique/);
+ assert.match(inspectV28(pool,sig,t).status,/not_single_candidate/);
 });
 test('summary redacts addresses and quantities',()=>{
  const r=createV28Summary();

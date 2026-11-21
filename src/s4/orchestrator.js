@@ -106,9 +106,8 @@ export function buildCodexExecArgs({outputMode='structured',model=null,schemaPat
   throw new Error('invalid_codex_model');
  // Force built-in OpenAI provider. Login must also be ChatGPT, not an API key.
  // CLI arguments are passed as an array (never shell evaluated).
- return ['--ask-for-approval','never','exec',
+ return ['--ask-for-approval','never','-c','model_provider="openai"','exec',
   '--sandbox','read-only','--skip-git-repo-check',
-  '-c','model_provider="openai"',
   ...(model?['--model',model]:[]),
   ...(outputMode==='structured'?['--output-schema',schemaPath]:[]),
   '--output-last-message',answerPath,'-'];

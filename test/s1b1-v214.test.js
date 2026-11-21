@@ -8,7 +8,7 @@ function b58(bytes){let v=BigInt('0x'+Buffer.from(bytes).toString('hex')),s='';
  while(v){s=ALPH[Number(v%58n)]+s;v/=58n;}return s;}
 const DATA={buy:b58([102,6,61,18,1,218,235,234,0]),
  sell:b58([51,230,133,164,1,127,131,173,0]),
- buy_exact_quote_in:b58([198,46,211,219,54,38,175,135,0])};
+ buy_exact_quote_in:b58([198,46,21,82,180,217,232,112,0])};
 const TOKEN='TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const pool='watchedPool',signature='sensitive-signature';
 const transfer=(source,destination,mint,kind='transferChecked')=>({

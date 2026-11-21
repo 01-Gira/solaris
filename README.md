@@ -12,7 +12,7 @@
 > S1b.1 adds conservative DEX classification; S2 audits mint/pool risk;
 > S3 provides a chronology-aware, audit-first strategy research framework.
 >
-> [Research qualification and read-only replay](docs/RESEARCH_QUALIFICATION.md).
+> [Research qualification and read-only replay](docs/RESEARCH_QUALIFICATION.md) and [forward study evidence workflow](docs/FORWARD_RESEARCH.md).
 >
 > **S3's indexed provider marks are not executable fills.** Every S3 run is explicitly
 > non-authoritative (`economics_authorized=false`). See [S2/S3 documentation](docs/S2_S3.md).

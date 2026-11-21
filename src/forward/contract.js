@@ -2,13 +2,15 @@ import {createHash,createPublicKey,verify} from 'node:crypto';
 import {decodeBase58,PUMP_FUN,PUMP_SWAP} from '../s1b1/decoder.js';
 
 export const VERSION='solaris-forward-1';
+export const PROSPECTIVE='prospective-launch-v1';
 export const DAY=86_400_000;
 export const FLOORS=Object.freeze({eventDays:30,pools:20,signatures:200,maxPoolPercent:20});
 export const MAX_RECORD_BYTES=8*1024*1024;
 export const MAINNET='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
-const ROLES=new Set(['chain','history','execution','census','market','strategy','clock']);
+const ROLES=new Set(['chain','history','execution','census','market','strategy','clock','discovery','enrollment']);
 export const ROLE={block:'chain',segment:'chain',gap:'chain',deployment:'history',pool:'history',fill:'execution',
- census:'census',quote:'market',decision:'strategy',timestamp:'clock'};
+ census:'census',quote:'market',decision:'strategy',timestamp:'clock',launch_scan:'census',
+ discovery:'discovery',launch_outcome:'enrollment'};
 export const PROGRAM={pumpfun:PUMP_FUN,pumpswap:PUMP_SWAP};
 export const check=(condition,code)=>{if(!condition)throw new Error(code);};
 export const recordObject=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
@@ -73,11 +75,33 @@ export function validateManifest(plan,policy){
  check(plan?.version===VERSION&&plan.policy===policy.digest&&isId(plan.study)&&
   [plan.strategy,plan.selection,plan.feeModel,plan.exclusions].every(isHash)&&integer(plan.maxQuoteAgeMs,1,300000)&&
   integer(plan.maxObservedLatencyMs,1,300000)&&integer(plan.horizonMs,1,DAY)&&recordObject(plan.windows),'invalid_manifest');
+ const universe=plan.universe;
+ if(universe!==undefined){
+  check(recordObject(universe)&&Object.keys(universe).length===8&&universe.mode===PROSPECTIVE&&
+   universe.algorithm==='first-eligible-creation-v1'&&isList(universe.venues,2)&&universe.venues.length>0&&
+   distinct(universe.venues)&&universe.venues.every(venue=>Object.hasOwn(PROGRAM,venue))&&
+   isList(universe.quoteMints,64)&&universe.quoteMints.length>0&&distinct(universe.quoteMints)&&universe.quoteMints.every(isAddress)&&
+   isList(universe.excludedBaseMints,10000)&&distinct(universe.excludedBaseMints)&&universe.excludedBaseMints.every(isAddress)&&
+   integer(universe.maxDiscoveryDelayMs,1000,15*60*1000)&&
+   integer(universe.maxAdmissionDelayMs,universe.maxDiscoveryDelayMs,60*60*1000)&&
+   recordObject(universe.issuers)&&Object.keys(universe.issuers).length===2,'invalid_launch_universe');
+  const discovery=policy.authorities.get(universe.issuers.discovery),enrollment=policy.authorities.get(universe.issuers.enrollment);
+  const externalOrganizations=new Set([...policy.authorities.values()].filter(a=>
+   a.roles.some(role=>['chain','history','census','clock','market','strategy','execution'].includes(role))).map(a=>a.organization));
+  check(discovery?.roles.includes('discovery')&&enrollment?.roles.includes('enrollment')&&
+   discovery.organization!==enrollment.organization&&!externalOrganizations.has(discovery.organization)&&
+   !externalOrganizations.has(enrollment.organization),'invalid_launch_authorities');
+ }
  const pools=new Set(),developmentMints=new Set();
  for(const name of ['development','forward']){
   const window=plan.windows[name],start=stamp(window?.from),end=stamp(window?.until);
   check(start!==null&&end!==null&&start%DAY===0&&end%DAY===0&&end-start>=FLOORS.eventDays*DAY&&
-   end-start<=366*DAY&&isList(window.pools,10000)&&window.pools.length>=FLOORS.pools,'invalid_window');
+   end-start<=366*DAY,'invalid_window');
+  if(universe){
+   check(Object.keys(window).length===2&&!Object.hasOwn(window,'pools'),'prospective_window_has_fixed_pools');
+   continue;
+  }
+  check(isList(window.pools,10000)&&window.pools.length>=FLOORS.pools,'invalid_window');
   for(const pool of window.pools){
    check(isAddress(pool?.address)&&isAddress(pool.baseMint)&&isAddress(pool.quoteMint)&&pool.baseMint!==pool.quoteMint&&
     Object.hasOwn(PROGRAM,pool.venue)&&!pools.has(pool.address)&&

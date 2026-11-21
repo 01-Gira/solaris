@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,generateKeyPairSync,sign} from 'node:crypto';
-import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,readFile,rm,stat,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {append,artifactRecord,checkpoint,openStore,records} from '../src/forward/store.js';
-import {authenticate,canonical,DAY,hash,MAINNET,manifestRecord,PROGRAM,readPolicy,signedPayload,VERSION} from '../src/forward/contract.js';
+import {authenticate,canonical,DAY,hash,MAINNET,manifestRecord,PROGRAM,PROSPECTIVE,readPolicy,signedPayload,VERSION} from '../src/forward/contract.js';
 import {blockIdentity,collectArchive,rpcTransport} from '../src/forward/archive.js';
 import {buildSegment} from '../src/forward/continuity.js';
 import {qualifyForward} from '../src/forward/report.js';
@@ -23,7 +23,7 @@ const loader='BPFLoaderUpgradeab1e11111111111111111111111';
 const fixtureProof=artifactRecord(Buffer.from('Synthetic independent archive, execution and quote fixtures.'));
 const PROOF=fixtureProof.body.sha256;
 const authorityRoles={alpha:'chain',beta:'chain',history:'history',replay:'execution',survey:'census',quote:'market',
- strategy:'strategy',clock:'clock'};
+ strategy:'strategy',clock:'clock',survey2:'census',discover:'discovery',enroll:'enrollment'};
 const keys=Object.fromEntries(Object.keys(authorityRoles).map(id=>[id,generateKeyPairSync('ed25519')]));
 const signer=generateKeyPairSync('ed25519');
 const trader=encode58(signer.publicKey.export({type:'spki',format:'der'}).subarray(-32));
@@ -60,9 +60,9 @@ function block(slot,parent,time,transactions=[]){
 }
 const ref=(block,tx)=>({slot:block.slot,blockhash:block.blockhash,signature:tx.signature,outerIndex:0,innerIndex:-1});
 
-function poolFixture(label,{native=false,token22=false}={}){
- const p={address:address(`${label}:pool`),venue:'pumpswap',baseMint:address(`${label}:base`),
-  quoteMint:address(`${label}:quote`),baseVault:address(`${label}:baseVault`),quoteVault:address(`${label}:quoteVault`),
+function poolFixture(label,{native=false,token22=false,baseMint,quoteMint,poolAddress}={}){
+ const p={address:poolAddress??address(`${label}:pool`),venue:'pumpswap',baseMint:baseMint??address(`${label}:base`),
+  quoteMint:quoteMint??address(`${label}:quote`),baseVault:address(`${label}:baseVault`),quoteVault:address(`${label}:quoteVault`),
   baseTokenProgram:token22?TOKEN_2022:TOKEN,quoteTokenProgram:TOKEN,recipients:[],evidenceDigest:PROOF};
  p.vaultOwner=p.address;
  if(native){p.venue='pumpfun';p.quoteMint='So11111111111111111111111111111111111111112';p.quoteVault=p.address;p.quoteTokenProgram=SYSTEM;}
@@ -245,35 +245,87 @@ test('instruction-level adjudication checks witnesses, economic owners, Token-20
   lamportMovements:[{...move,amount:'10'},{...move,amount:'10',kind:'unrelated'}]}}),'lamport_replay_disagrees');
 });
 
-async function replayFixture(dir){
+const quoteAsset=address('preregistered-quote-asset');
+const launchRule={mode:PROSPECTIVE,algorithm:'first-eligible-creation-v1',venues:['pumpswap'],quoteMints:[quoteAsset],
+ excludedBaseMints:[],maxDiscoveryDelayMs:3000,maxAdmissionDelayMs:5000,issuers:{discovery:'discover',enrollment:'enroll'}};
+const launchRef=(row,{p,tx},status='created')=>({status,...ref(row,tx),venue:p.venue,address:p.address,baseMint:p.baseMint,quoteMint:p.quoteMint});
+
+async function certifyLaunchScan(add,manifest,window,segment,rows,{reverse=false,scannedAt,sealAt,oneSource=false}={}){
+ const time=scannedAt??Date.parse(segment.body.lastTime)+100;
+ const body={plan:manifest,window,segment:hash(segment.body),scannedAt:iso(time),evidenceDigest:PROOF,launches:rows};
+ for(const issuer of oneSource?['survey']:['survey','survey2']){
+  const digest=await add('launch_scan',issuer,issuer==='survey2'&&reverse?{...body,launches:[...rows].reverse()}:body);
+  await add('timestamp','clock',{subject:digest,at:iso(sealAt??time+100)});
+ }
+}
+
+async function sealLaunchArchive(add,kind,issuer,body,{at=Date.parse(body.blockTime??body.lastTime)+30,omit=false}={}){
+ const digest=await add(kind,issuer,body);
+ if(!omit)await add('timestamp','clock',{subject:digest,at:iso(at)});
+ return digest;
+}
+
+async function replayFixture(dir,{prospective=false}={}){
  const {policy,raw}=settings(),start=Date.parse('2026-08-01T00:00:00Z');
- const assets=Array.from({length:40},(_,i)=>poolFixture(`asset-${i}`));
+ let assets=prospective?null:Array.from({length:40},(_,i)=>poolFixture(`asset-${i}`));
  const windows={};
  for(const [i,name] of ['development','forward'].entries())windows[name]={from:iso(start+i*31*DAY),until:iso(start+(i*31+30)*DAY),
-  pools:assets.slice(i*20,(i+1)*20).map(({p})=>({address:p.address,baseMint:p.baseMint,quoteMint:p.quoteMint,venue:p.venue}))};
+  ...(!prospective&&{pools:assets.slice(i*20,(i+1)*20).map(({p})=>({address:p.address,baseMint:p.baseMint,quoteMint:p.quoteMint,venue:p.venue}))})};
  const plan={version:VERSION,policy:policy.digest,study:'replay-fixture',strategy:PROOF,selection:PROOF,feeModel:PROOF,exclusions:PROOF,
-  maxQuoteAgeMs:10000,maxObservedLatencyMs:2000,horizonMs:3000,windows};
+  maxQuoteAgeMs:10000,maxObservedLatencyMs:2000,horizonMs:3000,windows,...(prospective&&{universe:launchRule})};
  await append(dir,fixtureProof);
  const manifest=await append(dir,manifestRecord(plan,policy));
  const add=(kind,issuer,body)=>append(dir,signed(policy,kind,issuer,body));
  const addBlock=x=>Promise.all(['alpha','beta'].map(id=>add('block',id,x)));
  await add('timestamp','clock',{subject:manifest,at:iso(start-DAY)});
+ // The prospective fixture has no pool or base mint until after the signed freeze.
+ if(prospective)assets=Array.from({length:40},(_,i)=>poolFixture(`future-pool-${i}`,{quoteMint:quoteAsset}));
  const programData=address('program data');
  const upgrade=wire('upgrade',loader,[programData,PROGRAM.pumpswap],Buffer.from('03000000','hex'));
  const a=block(1,0,start-4*DAY,[receipt(upgrade)]);
  await addBlock(a);
  const deployment=await add('deployment','history',{program:PROGRAM.pumpswap,programData,binaryDigest:PROOF,idlDigest:PROOF,evidenceDigest:PROOF,
   activation:ref(a,upgrade),fromSlot:2,untilSlot:999});
- for(let i=0;i<2;i++){
+ for(let i=0;!prospective&&i<2;i++){
   const local=assets.slice(i*20,(i+1)*20);
   const setup=block(2+i,1+i,start-(3-i)*DAY,local.map(({tx})=>receipt(tx)));
   await addBlock(setup);
   for(const item of local)item.proof=await add('pool','history',{...item.p,creation:ref(setup,item.tx),fromSlot:setup.slot,untilSlot:999});
  }
- let parent=3,nextSlot=4,firstForwardQuote,firstForwardDecision;
+ let parent=prospective?1:3,nextSlot=parent+1,firstForwardQuote,firstForwardDecision;
  for(const [i,name] of ['development','forward'].entries()){
   const local=assets.slice(i*20,(i+1)*20),attempts=[],lo=Date.parse(windows[name].from),hi=Date.parse(windows[name].until);
-  const chain=[],head=block(nextSlot++,parent,lo-1000);chain.push(head);parent=head.slot;
+  const chain=[],head=block(nextSlot++,parent,lo-1000);parent=head.slot;
+  if(!prospective)chain.push(head);
+  else{
+   const launches=[...local,...i===1?[poolFixture('later-pool-same-mint',{quoteMint:quoteAsset,baseMint:assets[0].p.baseMint})]:[]];
+   const setup=block(nextSlot++,parent,lo+2000,launches.map(({tx})=>receipt(tx)));parent=setup.slot;
+   const opening=buildSegment(genesis,[head,setup].map(blockIdentity));
+   for(const source of ['alpha','beta'])await sealLaunchArchive(add,'segment',source,opening.body);
+   for(const [index,row] of [head,setup].entries())for(const source of ['alpha','beta'])
+    await sealLaunchArchive(add,'block',source,{...row,membership:[opening.proof(index)]});
+   const rows=launches.map(item=>launchRef(setup,item));
+   for(const [index,item] of launches.entries()){
+    item.proof=await add('pool','history',{...item.p,creation:ref(setup,item.tx),fromSlot:setup.slot,untilSlot:999});
+    await add('timestamp','clock',{subject:item.proof,at:iso(lo+2250)});
+    const discovery=await add('discovery','discover',{plan:manifest,launch:hash(rows[index]),status:'observed',
+     observedAt:iso(lo+2100),evidenceDigest:PROOF});
+    await add('timestamp','clock',{subject:discovery,at:iso(lo+2200)});
+   }
+   await certifyLaunchScan(add,manifest,name,opening,rows,{reverse:true});
+   const preview=await qualifyForward(dir,policy,{manifest,asOf:iso(lo+2500),includeLaunchDrafts:true});
+   const drafts=preview.launchDrafts.filter(x=>x.window===name);
+   assert.equal(drafts.filter(x=>x.result==='admitted').length,20);
+   if(i===1)assert.deepEqual(drafts.filter(x=>x.result==='rejected').map(x=>x.reason),['duplicate_base_mint']);
+   for(const draft of drafts){
+    const id=await add('launch_outcome','enroll',draft);
+    await add('timestamp','clock',{subject:id,at:iso(lo+2600)});
+    const pool=local.find(x=>x.proof===draft.poolProof);
+    if(pool)pool.admission=id;
+   }
+   await add('census','survey',{plan:manifest,window:name,segment:hash(opening.body),scannedAt:iso(lo+2500),
+    evidenceDigest:PROOF,attempts:[]});
+  }
   for(let d=0;d<30;d++){
    const when=lo+d*DAY+10000,trades=[];
    for(let j=0;j<(d<20?7:6);j++){
@@ -292,7 +344,7 @@ async function replayFixture(dir){
     if(name==='forward'&&!firstForwardQuote)firstForwardQuote=q;
     await add('timestamp','clock',{subject:quote,at:iso(when-300)});
     const decision=await add('decision','strategy',{plan:manifest,attempt:id,pool:pool.p.address,side:'buy',
-     decisionAt:attempt.decisionAt,quote});
+     decisionAt:attempt.decisionAt,quote,...(prospective&&{admission:pool.admission})});
     if(name==='forward'&&!firstForwardDecision)firstForwardDecision=decision;
     await add('timestamp','clock',{subject:decision,at:iso(when-250)});
     await add('fill','replay',{...fill,...ref(row,tx),plan:manifest,attempt:id,deployment,poolProof:pool.proof});
@@ -300,8 +352,9 @@ async function replayFixture(dir){
   }
   const tail=block(nextSlot++,parent,hi);chain.push(tail);parent=tail.slot;
   const segment=buildSegment(genesis,chain.map(blockIdentity));
-  await Promise.all(['alpha','beta'].map(id=>add('segment',id,segment.body)));
+  await Promise.all(['alpha','beta'].map(id=>prospective?sealLaunchArchive(add,'segment',id,segment.body):add('segment',id,segment.body)));
   for(const [index,row] of chain.entries())await addBlock({...row,membership:[segment.proof(index)]});
+  if(prospective)await certifyLaunchScan(add,manifest,name,segment,[]);
   await add('census','survey',{plan:manifest,window:name,segment:hash(segment.body),scannedAt:iso(hi+DAY),evidenceDigest:PROOF,attempts});
  }
  return {policy,raw,manifest,asOf:iso(start+70*DAY),firstForwardQuote,firstForwardDecision,plan};
@@ -345,9 +398,200 @@ test('full two-window replay reaches every evidence floor in fixtures, blocks re
  assert.ok(unsigned&&first.manifest===unsigned.digest);
 });
 
+test('prospective replay freezes before any pool exists and reaches both sample floors through sealed admission',async t=>{
+ const {dir}=await tempStore(t);
+ const {policy,manifest,asOf,plan,firstForwardQuote,firstForwardDecision}=await replayFixture(dir,{prospective:true});
+ assert.ok(Object.values(plan.windows).every(window=>!Object.hasOwn(window,'pools')));
+ const r=await qualifyForward(dir,policy,{manifest,asOf});
+ assert.deepEqual(r.outstanding,['realNetwork']);
+ assert.equal(r.windows.development.launchUniverse.admitted,20);
+ assert.equal(r.windows.forward.launchUniverse.admitted,20);
+ assert.equal(r.windows.forward.launchUniverse.byReason.duplicate_base_mint,1);
+ assert.equal(r.windows.development.strictEligibleSignatures,200);
+ assert.equal(r.windows.forward.strictEligibleSignatures,200);
+ assert.deepEqual(r.overlaps,{signatures:0,decisionIds:0,pools:0,baseMints:0});
+ assert.equal(r.verifiedFills,0);assert.equal(r.eligibleHoldoutSignatures,0);
+ assert.equal(r.fixtureAdjudications,400);
+ assert.throws(()=>manifestRecord({...plan,universe:{...plan.universe,selectByPrice:true}},policy),/invalid_launch_universe/);
+ assert.throws(()=>manifestRecord({...plan,windows:{...plan.windows,
+  forward:{...plan.windows.forward,pools:[]}}},policy),/prospective_window_has_fixed_pools/);
+ const rogueAt=Date.parse(plan.windows.forward.from)+10000;
+ const rogueDecision=await append(dir,signed(policy,'decision','strategy',{plan:manifest,attempt:'unregistered-intent',
+  pool:address('not-admitted'),side:'buy',decisionAt:iso(rogueAt),quote:PROOF}));
+ await append(dir,signed(policy,'timestamp','clock',{subject:rogueDecision,at:iso(rogueAt-50)}));
+ const rogue=await qualifyForward(dir,policy,{manifest,asOf});
+ assert.equal(rogue.windows.forward.uncensusedDecisions,1);
+ assert.equal(rogue.windows.forward.gates.completeAttemptCensus,'BLOCKED');
+
+ const beforeAdmission=Date.parse(plan.windows.forward.from)+2550;
+ const originalQuote=hash(signed(policy,'quote','quote',firstForwardQuote));
+ const members=[];let originalDecision;
+ for await(const {digest,record} of records(dir)){
+  if(digest===firstForwardDecision)originalDecision=record.body;
+  if(![firstForwardDecision,originalQuote,rogueDecision].includes(digest))members.push(digest);
+ }
+ const stale=await append(dir,signed(policy,'quote','quote',{...firstForwardQuote,sourceAt:iso(beforeAdmission),
+  requestAt:iso(beforeAdmission+100),receivedAt:iso(beforeAdmission+300)}));
+ const decision=await append(dir,signed(policy,'decision','strategy',{...originalDecision,quote:stale,admission:hash('a different admission')}));
+ for(const [subject,at] of [[stale,beforeAdmission+350],[decision,Date.parse(originalDecision.decisionAt)-20]]){
+  const clock=await append(dir,signed(policy,'timestamp','clock',{subject,at:iso(at)}));
+  members.push(subject,clock);
+ }
+ const pinned=await append(dir,{version:VERSION,kind:'checkpoint',body:{records:members}});
+ const refused=await qualifyForward(dir,policy,{manifest,asOf,checkpoint:pinned});
+ assert.equal(refused.windows.forward.missingOrInvalidDecisionCommitments,1);
+ assert.equal(refused.windows.forward.byQuote.stale_future_or_unsealed_quote,1);
+ assert.equal(refused.windows.forward.strictEligibleSignatures,199);
+});
+
 test('an unconfigured real-network store has zero established evidence and remains blocked',async t=>{
  const {dir}=await tempStore(t),policy=readPolicy({version:VERSION,network:'mainnet',genesis:MAINNET,authorities:[],layouts:[]});
  const r=await qualifyForward(dir,policy,{asOf:'2026-11-21T00:00:00.000Z'});
  assert.equal(r.verdict,'BLOCKED_EXTERNAL_EVIDENCE');assert.equal(r.verifiedFills,0);
  assert.equal(r.gates.independentSources,'BLOCKED');assert.equal(r.gates.frozenDesign,'BLOCKED');
+});
+
+async function launchSmoke(t,{missingInventory=false,oneSource=false,gap=false,discoveryState='observed',
+ discoveryClock,noPoolProof=false,scanExtraField=false,samePool=false,lateArchive=false,unmatchedFailure=false}={}){
+ const {dir,root}=await tempStore(t),{policy,raw}=settings(),lo=Date.parse('2026-09-01T00:00:00.000Z');
+ const plan={version:VERSION,policy:policy.digest,study:'new-launch-smoke',strategy:PROOF,selection:PROOF,feeModel:PROOF,
+  exclusions:PROOF,maxQuoteAgeMs:5000,maxObservedLatencyMs:1000,horizonMs:1000,universe:launchRule,
+  windows:{development:{from:iso(lo),until:iso(lo+30*DAY)},forward:{from:iso(lo+31*DAY),until:iso(lo+61*DAY)}}};
+ await append(dir,fixtureProof);
+ const manifest=await append(dir,manifestRecord(plan,policy));
+ const add=(kind,issuer,body)=>append(dir,signed(policy,kind,issuer,body));
+ await add('timestamp','clock',{subject:manifest,at:iso(lo-10000)});
+ const first=poolFixture('fresh-first',{quoteMint:quoteAsset}),second=poolFixture('fresh-duplicate',{quoteMint:quoteAsset,
+  baseMint:first.p.baseMint,poolAddress:samePool?first.p.address:undefined}),failed=poolFixture('failed-launch',{quoteMint:quoteAsset});
+ const before=block(1,0,lo-1000),created=block(3,1,lo+1000,
+  [receipt(first.tx),receipt(second.tx),receipt(failed.tx,{err:{InstructionError:[0,'Custom']},fee:5000})]);
+ const segment=buildSegment(genesis,[before,created].map(blockIdentity));
+ let tardy;
+ for(const issuer of ['alpha','beta']){
+  await sealLaunchArchive(add,'segment',issuer,segment.body);
+  await sealLaunchArchive(add,'block',issuer,{...before,membership:[segment.proof(0)]});
+  const late=issuer==='beta'&&lateArchive;
+  const signedBlock={...created,membership:[segment.proof(1)]};
+  if(issuer==='beta'&&unmatchedFailure)signedBlock.transactions=created.transactions.slice(0,2);
+  const digest=await sealLaunchArchive(add,'block',issuer,signedBlock,{omit:late});
+  if(late)tardy=digest;
+ }
+ const launches=[launchRef(created,first),launchRef(created,second),launchRef(created,failed,'failed')];
+ for(const item of noPoolProof?[second]:[first,second]){
+  const proof=await add('pool','history',{...item.p,creation:ref(created,item.tx),fromSlot:3,untilSlot:999});
+  await add('timestamp','clock',{subject:proof,at:iso(lo+1450)});
+ }
+ const rows=missingInventory?launches.slice(0,1):unmatchedFailure?launches.slice(0,2):[...launches];
+ if(gap)rows.push({status:'unavailable',slot:2});
+ if(scanExtraField)rows[0]={...rows[0],profitRank:1};
+ await certifyLaunchScan(add,manifest,'development',segment,rows,{oneSource,reverse:true});
+ for(const [index,status] of [[1,'observed'],[0,discoveryState]])if(status!=='missing'){
+  const observation=await add('discovery','discover',{plan:manifest,launch:hash(launches[index]),status,observedAt:iso(lo+1200),evidenceDigest:PROOF});
+  await add('timestamp','clock',{subject:observation,at:iso(lo+(index===0?(discoveryClock??1400):1300))});
+ }
+ const inspect=(at=lo+2000)=>qualifyForward(dir,policy,{manifest,asOf:iso(at),includeLaunchDrafts:true});
+ return {dir,root,policy,raw,manifest,lo,add,inspect,launches,plan,tardy};
+}
+
+test('canonical roster order defeats reordered scans and earlier discovery of a duplicate; ledger records are append-only',async t=>{
+ const {dir,root,raw,manifest,lo,add,inspect,launches}=await launchSmoke(t,{samePool:true});
+ const r=await inspect(),path=join(root,'policy.json'),ledger=join(root,'unsigned.json');
+ assert.equal(r.windows.development.registeredPools,0);
+ assert.deepEqual(r.launchDrafts.map(x=>[x.launch,x.reason]),[
+  [hash(launches[0]),'first_eligible_creation'],[hash(launches[1]),'duplicate_pool'],[hash(launches[2]),'failed_creation']]);
+ await writeFile(path,JSON.stringify(raw));
+ assert.equal((await forwardCommand('launch-ledger',[dir,path,manifest,ledger,iso(lo+2000)])).drafts,3);
+ assert.equal((await stat(ledger)).mode&0o777,0o600);
+ assert.deepEqual(JSON.parse(await readFile(ledger)).bodies,r.launchDrafts);
+ await assert.rejects(forwardCommand('launch-ledger',[dir,path,manifest,ledger,iso(lo+2001)]),{code:'EEXIST'});
+ for(const body of r.launchDrafts){
+  const subject=await add('launch_outcome','enroll',body);
+  await add('timestamp','clock',{subject,at:iso(lo+2400)});
+ }
+ const approved=await inspect(lo+3000);
+ assert.equal(approved.windows.development.launchUniverse.admitted,1);
+ assert.equal(approved.windows.development.launchUniverse.missingOutcomeSeals,0);
+ assert.equal(approved.launchDrafts.length,0);
+ assert.equal(approved.windows.development.gates.prospectiveLaunchUniverse,'BLOCKED');
+});
+
+test('late or backdated discovery and post-hoc admission cannot select a launch',async t=>{
+ for(const clock of [1199,4200]){
+  const {inspect,lo,launches,add}=await launchSmoke(t,{discoveryClock:clock});
+  const proposal=await inspect(lo+4500);
+  const first=proposal.launchDrafts.find(x=>x.launch===hash(launches[0]));
+  assert.equal(first.reason,'missing_timely_discovery');
+  assert.equal(proposal.windows.development.launchUniverse.lateDiscoveryEvidence,1);
+  const second=proposal.launchDrafts.find(x=>x.launch===hash(launches[1]));
+  assert.equal(second.reason,'duplicate_base_mint');
+  const posthoc=await add('launch_outcome','enroll',{...first,result:'admitted',reason:'first_eligible_creation'});
+  await add('timestamp','clock',{subject:posthoc,at:iso(lo+6100)});
+  const actual=await inspect(lo+6200);
+  assert.equal(actual.windows.development.launchUniverse.admitted,0);
+  assert.equal(actual.windows.development.launchUniverse.conflictingOutcomes,1);
+ }
+ const {inspect,lo,add}=await launchSmoke(t);
+ const early=await inspect();
+ const expired=await inspect(lo+6100);
+ assert.equal(expired.launchDrafts[0].reason,'missing_timely_admission');
+ const subject=await add('launch_outcome','enroll',early.launchDrafts[0]);
+ await add('timestamp','clock',{subject,at:iso(lo+6100)});
+ assert.equal((await inspect(lo+6200)).windows.development.launchUniverse.admitted,0);
+});
+
+test('missing launches, missing independent proofs, and discretionary scans fail closed',async t=>{
+ const missing=await launchSmoke(t,{missingInventory:true});
+ const beforeDeadline=await missing.inspect();
+ assert.equal(beforeDeadline.launchDrafts.length,0);
+ const afterDeadline=await missing.inspect(missing.lo+7000);
+ assert.equal(afterDeadline.windows.development.launchUniverse.omittedWitnessedLaunches,2);
+ assert.equal(afterDeadline.launchDrafts[0].reason,'missing_timely_launch_evidence');
+ const unresolved=await launchSmoke(t,{unmatchedFailure:true});
+ assert.equal((await unresolved.inspect(unresolved.lo+7000)).windows.development.launchUniverse.omittedWitnessedLaunches,1);
+ const gap=await launchSmoke(t,{gap:true});
+ assert.ok((await gap.inspect()).launchDrafts.some(row=>row.reason==='launch_unavailable'));
+ const noHistory=await launchSmoke(t,{noPoolProof:true});
+ assert.equal((await noHistory.inspect(noHistory.lo+7000)).windows.development.launchUniverse.byEvidenceGap.independent_creation_proof_missing,1);
+ for(const options of [{oneSource:true},{scanExtraField:true}]){
+  const smoke=await launchSmoke(t,options),report=await smoke.inspect(smoke.lo+7000);
+  assert.equal(report.windows.development.launchUniverse.missingScanQuorums,1);
+  assert.equal(report.windows.development.registeredPools,0);
+  assert.equal(report.launchDrafts.length,0);
+ }
+});
+
+test('missing and failed observations are separate rejections, and neither promotes a later pool for the same mint',async t=>{
+ for(const [state,reason] of [['missing','missing_timely_discovery'],['failed','discovery_failed']]){
+  const {inspect,lo,launches,add,manifest}=await launchSmoke(t,{discoveryState:state});
+  const report=await inspect(lo+4500);
+  const rejection=report.launchDrafts.find(x=>x.launch===hash(launches[0]));
+  assert.equal(rejection.reason,reason);
+  assert.equal(report.launchDrafts.find(x=>x.launch===hash(launches[1])).reason,'duplicate_base_mint');
+  for(const row of report.launchDrafts){
+   const subject=await add('launch_outcome','enroll',row);
+   await add('timestamp','clock',{subject,at:iso(lo+4600)});
+  }
+  const sealed=await inspect(lo+4700);
+  assert.equal(sealed.windows.development.launchUniverse.missingOutcomeSeals,0);
+  assert.equal(sealed.windows.development.launchUniverse.admitted,0);
+  const late=await add('discovery','discover',{plan:manifest,launch:hash(launches[0]),status:'observed',
+   observedAt:iso(lo+1200),evidenceDigest:PROOF});
+  await add('timestamp','clock',{subject:late,at:iso(lo+5100)});
+  const replay=await inspect(lo+5500);
+  assert.equal(replay.windows.development.launchUniverse.conflictingOutcomes,0);
+  assert.equal(replay.windows.development.launchUniverse.missingOutcomeSeals,0);
+ }
+});
+
+test('an archive witness that is independently sealed after the admission deadline cannot retroactively qualify a launch',async t=>{
+ const {lo,tardy,inspect,add}=await launchSmoke(t,{lateArchive:true});
+ assert.equal((await inspect()).launchDrafts.length,0);
+ const rejected=await inspect(lo+6200);
+ const subject=await add('launch_outcome','enroll',rejected.launchDrafts[0]);
+ await add('timestamp','clock',{subject,at:iso(lo+6300)});
+ await add('timestamp','clock',{subject:tardy,at:iso(lo+6500)});
+ const report=await inspect(lo+7000);
+ assert.equal(report.windows.development.launchUniverse.admitted,0);
+ assert.equal(report.windows.development.launchUniverse.conflictingOutcomes,0);
+ assert.equal(report.launchDrafts[0].reason,'missing_timely_launch_evidence');
 });

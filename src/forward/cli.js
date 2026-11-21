@@ -1,5 +1,6 @@
 import {pathToFileURL} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
+import {writeFile} from 'node:fs/promises';
 import {append,checkpoint,importArtifact,openStore,readJson} from './store.js';
 import {authenticate,check,hash,integer,isList,manifestRecord,readPolicy,VERSION} from './contract.js';
 import {collectArchive,rpcTransport,validateBlock} from './archive.js';
@@ -8,7 +9,7 @@ import {qualifyForward} from './report.js';
 
 const output=value=>process.stdout.write(`${JSON.stringify(value)}\n`);
 const argumentCount={init:[1,1],artifact:[2,2],freeze:[3,3],import:[3,3],checkpoint:[1,1],
- report:[2,5],watch:[3,5],capture:[4,4],segment:[2,3],policy:[1,1]};
+ report:[2,5],watch:[3,5],capture:[4,4],segment:[2,3],policy:[1,1],'launch-ledger':[4,5]};
 
 export async function forwardCommand(command,args,{env=process.env,emit=output,sleep=delay}={}){
  check(Object.hasOwn(argumentCount,command)&&integer(args.length,...argumentCount[command]),'invalid_forward_command');
@@ -49,6 +50,12 @@ export async function forwardCommand(command,args,{env=process.env,emit=output,s
    retries:request.retries,maxUnits:request.maxUnits,transport:rpcTransport(env.SOLARIS_FREE_ARCHIVAL_RPC_URL)});
  }
  const opts={manifest:third==='-'?undefined:third};
+ if(command==='launch-ledger'){
+  const {launchDrafts,asOf}=await qualifyForward(dir,policy,{...opts,asOf:fifth,includeLaunchDrafts:true});
+  await writeFile(fourth,`${JSON.stringify({manifest:third,asOf,kind:'unsigned_launch_outcomes',bodies:launchDrafts},null,2)}\n`,
+   {flag:'wx',mode:0o600});
+  return {status:'unsigned_outcomes_require_attestation',drafts:launchDrafts.length};
+ }
  if(command==='report')return qualifyForward(dir,policy,{...opts,asOf:fourth==='-'?undefined:fourth,checkpoint:fifth});
  const interval=fourth===undefined?60:Number(fourth),checks=fifth===undefined?10:Number(fifth);
  check(integer(interval,30,3600)&&integer(checks,1,120),'invalid_monitor_bounds');

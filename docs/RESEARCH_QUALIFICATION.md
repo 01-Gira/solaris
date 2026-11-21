@@ -43,6 +43,8 @@ SOLARIS currently has no approved ingestion contract for independent fill adjudi
 | Independent holdout | BLOCKED | Zero eligible records, no predeclared manifest, two recent UTC event days and one pool in the locally reconciled set. |
 | Decision-time inputs | BLOCKED | No verified decision-time quote, route state, failure/latency and liquidity evidence meeting the contract. |
 
+A separate read-only S3 coverage probe at 13:39 WIB evaluated the 50 newest pools. Zero passed the existing gate. Every pool had too few snapshots, insufficient observed span and insufficient price variation. The recorder health endpoint passed. The polling window contained 375 successful and two partial runs over less than 24 hours of operation. The 25 stored S2 assessments and one completed S4.2 task all had economics authorization disabled.
+
 ## What the code can establish
 
 The new auditor matches known discriminators to the correct program, checks exact watched-pool identity, verifies unique message account indexes and checks CPI parentage. It uses unsigned integer base units and compares decimals, mint, token-account owner and token program. Token-2022 checked-with-fee supports exact gross debit and credited units. Plain Token-2022 transfers can withhold an epoch-dependent fee. Rows with unknown fee treatment stay blocked. Untracked token movements remain visible in the transaction-wide replay. ATA initialization and closure require ordered evidence. The fresh ATA funding branch can establish the exact WSOL reserve. Preexisting or prefunded accounts without reserve evidence stay unresolved. The fee payer, network fee, System transfers and lamport effects of WSOL transfers and closure are modeled separately from a candidate's token amounts.

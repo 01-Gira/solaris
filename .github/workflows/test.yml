@@ -19,7 +19,7 @@ jobs:
         ports:
           - 5432/tcp
         options: >-
-          --health-cmd 'pg_isready -U postgres -d solaris_fixture'
+          --health-cmd pg_isready
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10

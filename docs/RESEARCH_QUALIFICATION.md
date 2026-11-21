@@ -12,7 +12,7 @@ Freeze these gates before collecting or evaluating a holdout. They are minimum d
 | Holdout | Freeze strategy, study windows, pool and mint assignment, fees and exclusions before collection. Require at least 30 UTC event days, 20 disjoint pools and 200 distinct strict-fill signatures in each of development and forward holdout, a maximum 20% share from any pool per window, and zero signature, pool, or base-mint overlap. Purge cross-boundary positions and delayed observations. |
 | Decision-time inputs | Point-in-time pool state and route quotes with decision timestamps, observed latency, liquidity, price impact and failed-attempt coverage. Current mint state and indexed observations cannot substitute for these inputs. |
 
-SOLARIS currently has no approved ingestion contract for independent fill adjudications or predeclared holdout manifests. The audit reports zero **established** verified fills and zero eligible holdout records until such evidence exists. An unknown denominator remains unknown. The qualification report does not authorize economics or enable trading.
+The saved-data audit below retains its historical result. The [forward evidence workflow](FORWARD_RESEARCH.md) now supplies ingestion, independent adjudication and holdout manifest tooling. Its real-data gates require an approved trust policy and matching external evidence. An unknown denominator remains unknown. The qualification report does not authorize economics or enable trading.
 
 ## Audit result, November 21, 2026
 

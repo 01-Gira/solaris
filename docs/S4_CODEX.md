@@ -145,3 +145,21 @@ left running; do not use `--remove-orphans` or delete Docker volumes.
 Docker's `buildx isn't installed` warning is non-fatal when the image builds.
 The `orphan containers` warning can occur because the S4 Compose overlay
 does not list the existing S1b stream; it is not evidence that S1b failed.
+
+
+## Codex structured-output compatibility (S4.1)
+
+If the default Audit Agent produces `codex_exited_nonzero:1:STRUCTURED_OUTPUT_SCHEMA`, **do not assume the JSON Schema is invalid**. The older diagnostics classified the mere mention of `--output-schema` too broadly. The improved version distinguishes unsupported CLI flags from specific structured-output errors. Verify `codex --version` and `npm run s4:doctor` first.
+
+The default `S4_CODEX_OUTPUT_MODE=structured` passes a strict JSON Schema to Codex. If a real schema rejection or model compatibility problem persists, there is an **explicit, single-shot** compatibility mode:
+
+```bash
+S4_CODEX_ENABLED=1 S4_DRY_RUN=0 \
+S4_CODEX_OUTPUT_MODE=validated_json \
+S4_PAID_API_FALLBACK=0 S4_LIVE_TRADING_ENABLED=0 \
+npm run s4:run -- --context .solaris/s4-context.json --agents audit
+```
+
+`validated_json` removes the `--output-schema` CLI argument, but **does not loosen SOLARIS' own strict schema, evidence ID, risk policy, economics or execution checks**. If Codex does not return the required JSON object, the result becomes `AGENT_ERROR`, not a successful decision. No automatic retry or paid fallback occurs. One invocation can consume ChatGPT Codex allowance even if it fails.
+
+Do not paste raw Codex stderr, `.env`, authentication tokens, private keys or full `.solaris` logs. Send only the safe `status` and `reason` fields.

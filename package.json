@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/collector.js && node --check src/server.js && node --check src/db.js && node --check src/normalize.js && node --check src/gecko.js && node --check src/s1b/config.js && node --check src/s1b/rpc.js && node --check src/s1b/parse.js && node --check src/s1b/store.js && node --check src/s1b/worker.js && node --check src/s1b/index.js && node --check src/s1b1/decoder.js && node --check src/s1b1/index.js && node --check src/s2/risk.js && node --check src/s2/index.js && node --check src/s3/engine.js && node --check src/s3/index.js && node --check src/s4/policy.js && node --check src/s4/export-context.js && node --check src/s4/orchestrator.js && node --check src/s4/index.js && node --check src/s4/doctor.js && node --check src/s4/hydration-metrics.js && node --check src/s4/hydration-report.js && node --check src/s1b/rpc-pacer.js && node --check src/s1b/hydration.js && node --check src/s42/policy.js && node --check src/s42/bridge.js && node --check src/s42/host.js && node --check src/s1b1/forensics.js && node --check src/s1b1/forensic-report.js && node --check src/s1b1/v2.js && node --check src/s1b1/v2-run.js && node --check src/s1b1/v21-attribution.js && node --check src/s1b1/v21-report.js && node --check src/s1b1/v22-authority.js && node --check src/s1b1/v22-report.js && node --check src/s1b1/v23-trace.js && node --check src/s1b1/v23-report.js",
+    "check": "node --check src/index.js && node --check src/collector.js && node --check src/server.js && node --check src/db.js && node --check src/normalize.js && node --check src/gecko.js && node --check src/s1b/config.js && node --check src/s1b/rpc.js && node --check src/s1b/parse.js && node --check src/s1b/store.js && node --check src/s1b/worker.js && node --check src/s1b/index.js && node --check src/s1b1/decoder.js && node --check src/s1b1/index.js && node --check src/s2/risk.js && node --check src/s2/index.js && node --check src/s3/engine.js && node --check src/s3/index.js && node --check src/s4/policy.js && node --check src/s4/export-context.js && node --check src/s4/orchestrator.js && node --check src/s4/index.js && node --check src/s4/doctor.js && node --check src/s4/hydration-metrics.js && node --check src/s4/hydration-report.js && node --check src/s1b/rpc-pacer.js && node --check src/s1b/hydration.js && node --check src/s42/policy.js && node --check src/s42/bridge.js && node --check src/s42/host.js && node --check src/s1b1/forensics.js && node --check src/s1b1/forensic-report.js && node --check src/s1b1/v2.js && node --check src/s1b1/v2-run.js && node --check src/s1b1/v21-attribution.js && node --check src/s1b1/v21-report.js && node --check src/s1b1/v22-authority.js && node --check src/s1b1/v22-report.js && node --check src/s1b1/v23-trace.js && node --check src/s1b1/v23-report.js && node --check src/s1b1/v24-subtree.js && node --check src/s1b1/v24-report.js",
     "prune": "node scripts/prune.js",
     "start:s1b": "node src/s1b/index.js",
     "decode:s1b1": "node src/s1b1/index.js",
@@ -28,7 +28,8 @@
     "s1b1:v2": "node src/s1b1/v2-run.js",
     "s1b1:v21-attribution": "node src/s1b1/v21-report.js",
     "s1b1:v22-authority": "node src/s1b1/v22-report.js",
-    "s1b1:v23": "node src/s1b1/v23-report.js"
+    "s1b1:v23": "node src/s1b1/v23-report.js",
+    "s1b1:v24": "node src/s1b1/v24-report.js"
   },
   "dependencies": {
     "pg": "^8.13.0"

@@ -94,3 +94,54 @@ Any model-produced recommendation is **research-only** and cannot authorize fund
 - S4.3: deterministic paper execution simulator and risk limits; must NEVER make real transactions.
 - S4.4: resumption, scheduling, quota budgets and fail-closed backoff after end-to-end tests.
 - Future optional API adapter: separate reviewed implementation behind explicit opt-in and spend caps. **Not enabled or implemented in S4.1**.
+
+
+## Troubleshooting: Codex process exits with code 1
+
+A successful Docker build, S1–S3 exporter and S4 dry-run do **not** guarantee that
+the host Codex CLI is able to run a model. An `AGENT_ERROR` of
+`codex_exited_nonzero:1` indicates a Codex subprocess failure. By default,
+the orchestrator deliberately discards raw stdout/stderr because they can
+contain credentials, local paths and model responses.
+
+S4 now reports an additional **safe error category** after a nonzero exit,
+such as `CLI_ARGUMENT_OR_VERSION`, `CODEX_AUTH_OR_ACCESS`,
+`CHATGPT_USAGE_OR_RATE_LIMIT`, `MODEL_NOT_AVAILABLE`,
+`LOCAL_SANDBOX_OR_PERMISSION`, `STRUCTURED_OUTPUT_SCHEMA`,
+`CODEX_LOCAL_CONFIGURATION`, `NETWORK_OR_TLS`, or `UNCLASSIFIED`.
+This is pattern matching for diagnosis, **not proof of the exact root cause**.
+The raw Codex output remains private and is never saved or returned.
+
+Start with a **zero-model-call** check:
+
+```bash
+cd ~/solaris
+git pull --ff-only origin main
+npm test
+npm run check
+npm run s4:doctor
+```
+
+The doctor checks only `codex --help`, `codex exec --help`, and
+`codex login status` in the same restricted environment as the agent.
+A successful response says `PREFLIGHT_PASS_MODEL_NOT_TESTED`, which does
+not imply a successful Codex request. If the doctor reports unsupported
+CLI flags, update Codex using official installation instructions and rerun.
+If login is unavailable, authenticate via ChatGPT and repeat.
+
+Then retry **only one agent**:
+
+```bash
+S4_CODEX_ENABLED=1 S4_DRY_RUN=0 \
+  S4_AI_BACKEND=codex S4_PAID_API_FALLBACK=0 S4_LIVE_TRADING_ENABLED=0 \
+  npm run s4:run -- --context .solaris/s4-context.json --agents audit
+```
+
+If it still fails, inspect the **category only**. Do not paste `.env`,
+`~/.codex/auth.json`, private keys, database credentials, full Codex
+stderr or the complete private audit log. The S1b stream should be
+left running; do not use `--remove-orphans` or delete Docker volumes.
+
+Docker's `buildx isn't installed` warning is non-fatal when the image builds.
+The `orphan containers` warning can occur because the S4 Compose overlay
+does not list the existing S1b stream; it is not evidence that S1b failed.

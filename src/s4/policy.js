@@ -64,13 +64,19 @@ export function sanitizeResearchContext(input){
   hydrated_event_rows_last_5m:finite(hydration.hydrated_event_rows_last_5m),
   stored_transaction_rows:finite(hydration.stored_transaction_rows)
  }:null;
+ const decodeStatuses=['unknown','failed_onchain','unsupported_dex','unrelated_pool',
+  'ambiguous','unsupported_variant','direction_only','matched_quote_delta'];
+ const decodeBreakdown=stats.decode_breakdown&&typeof stats.decode_breakdown==='object'&&
+  !Array.isArray(stats.decode_breakdown)?
+  Object.fromEntries(decodeStatuses.map(x=>[x,finite(stats.decode_breakdown[x])])):null;
  const s3=input.s3||{};
  const result={
   source:'solaris_s4_context_v1',collected_at:iso(input.collected_at),
   pools,
   stats:{observed_pools:finite(stats.observed_pools),hydrated_events:finite(stats.hydrated_events),
    total_events:finite(stats.total_events),decoded_events:finite(stats.decoded_events),
-   s2_assessed_pools:finite(stats.s2_assessed_pools),hydration:h},
+   s2_assessed_pools:finite(stats.s2_assessed_pools),hydration:h,
+   decode_breakdown:decodeBreakdown},
   s3:{
    evidence_id:'s3:latest',
    status:['BLOCKED_DATA','RESEARCH_ONLY_BLOCKED'].includes(s3.status)?s3.status:'no_validated_run',
@@ -118,6 +124,7 @@ export function createPrompt(role,context,priorDecisions=[]){
   'Missing values and out-of-date data must be marked unknown, not guessed.',
   'Hydration is only valid when comparing event rows matched by transaction signature; a global transaction count is not an event coverage numerator.',
   'Recent arrivals and hydrations are different time cohorts and do not alone establish net backlog growth. Missing transaction records are not verified on-chain failures.',
+  'Decoder classifications are labels, not audited executable fills: unsupported_dex and ambiguous do not imply valid swaps.',
   'Quote only evidence_ids present in the context. Do not treat GeckoTerminal rolling aggregates as trade fills.',
   'The only allowed recommendations are RESEARCH, WATCH, REJECT, INSUFFICIENT_DATA.',
   'Return JSON only matching the output schema; economics_authorized MUST be false.',

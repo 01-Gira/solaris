@@ -46,6 +46,11 @@ try{
   stats.hydrated_events=null;
   stats.hydration=null;
  }
+ // Decoder classifications are NOT verified fills. Preserve observed categories.
+ const decodeRows=await optional(
+  'SELECT status,COUNT(*)::int AS n FROM onchain_trade_decodes GROUP BY status',null);
+ stats.decode_breakdown=decodeRows===null?null:Object.fromEntries(
+  decodeRows.filter(x=>typeof x.status==='string').map(x=>[x.status,x.n]));
  const s3Rows=await optional(
   'SELECT mode,status,economics_authorized,report FROM s3_research_runs ORDER BY id DESC LIMIT 1',[]);
  const last=s3Rows[0];

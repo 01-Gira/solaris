@@ -15,9 +15,13 @@ function validateURL(value, protocol, name) {
   return value;
 }
 export function getS1bConfig(env = process.env) {
+  const hydrationMode=env.S1B_HYDRATION_MODE||'inline';
+  if(!['inline','external'].includes(hydrationMode))
+    throw new Error('S1B_HYDRATION_MODE must be inline or external');
   const dbUrl = required(env, 'DATABASE_URL');
   return {
     dbUrl,
+    hydrationMode,
     httpUrl: validateURL(required(env, 'SOLANA_RPC_HTTP_URL'), 'https:', 'SOLANA_RPC_HTTP_URL'),
     wsUrl: validateURL(required(env, 'SOLANA_RPC_WS_URL'), 'wss:', 'SOLANA_RPC_WS_URL'),
     maxPools: integer(env, 'S1B_MAX_POOLS', 3, 1, 20),

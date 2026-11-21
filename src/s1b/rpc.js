@@ -11,10 +11,11 @@ function retryAfterMs(value) {
 }
 
 export class SolanaRpc {
-  constructor(url, { fetchImpl = fetch, spacingMs = 1000 } = {}) {
+  constructor(url, { fetchImpl = fetch, spacingMs = 1000, pacer = null } = {}) {
     this.url = url;
     this.fetchImpl = fetchImpl;
     this.spacingMs = spacingMs;
+    this.pacer = pacer;
     this.nextAllowedAt = 0;
     this.pending = Promise.resolve();
     this.counter = 0;
@@ -22,9 +23,12 @@ export class SolanaRpc {
   async call(method, params = []) {
     // Serialize HTTP RPC calls to avoid bursts and account for provider quotas.
     const job = this.pending.then(async () => {
-      const wait = this.nextAllowedAt - Date.now();
-      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
-      this.nextAllowedAt = Date.now() + this.spacingMs;
+      if(this.pacer) await this.pacer.reserve();
+      else {
+        const wait = this.nextAllowedAt - Date.now();
+        if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+        this.nextAllowedAt = Date.now() + this.spacingMs;
+      }
       let response;
       try {
         response = await this.fetchImpl(this.url, {
@@ -38,7 +42,8 @@ export class SolanaRpc {
       }
       if (!response.ok) {
         const retry = response.status === 429 ? Math.max(30000, retryAfterMs(response.headers.get('retry-after'))) : 0;
-        this.nextAllowedAt = Math.max(this.nextAllowedAt, Date.now() + retry);
+        if (this.pacer && response.status === 429) await this.pacer.defer(retry);
+        else this.nextAllowedAt = Math.max(this.nextAllowedAt, Date.now() + retry);
         throw new RpcError(`RPC ${method}: HTTP ${response.status}`, retry);
       }
       let body;

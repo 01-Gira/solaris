@@ -1,5 +1,6 @@
 import { parseLogsNotification, parseSignatureHistory, validPubkey } from './parse.js';
 import { SolanaRpc } from './rpc.js';
+import { SharedRpcPacer } from './rpc-pacer.js';
 import {
   selectPools, latestSignature, recordEvent, setHealth, beginRecovery,
   finishRecovery, pendingSignatures, saveTransaction, markTransactionRetry, beginWatch, finishWatch
@@ -53,6 +54,9 @@ export async function processTransactions(db, rpc, config) {
       if (!tx) throw new Error('getTransaction returned null (not indexed yet)');
       await saveTransaction(db, job.signature, tx);
     } catch (error) {
+      // DB coordination failure is NOT a Solana transaction failure. Never
+      // burn the transaction's retry budget when the shared pacer is down.
+      if(error?.code==='RPC_PACING_UNAVAILABLE')throw error;
       const result = await markTransactionRetry(db, job.signature, job.attempts,
         config.txMaxAttempts, shortError(error), error?.retryAfterMs || 0);
       if (result.exhausted) log('tx_unavailable', { signature: job.signature, attempts: result.nextAttempt, error: shortError(error) });
@@ -158,7 +162,11 @@ export function createWsSession(url, { maxQueue, onEvent, WebSocketImpl = WebSoc
 }
 
 export async function runS1b(db, config, signal) {
-  const rpc = new SolanaRpc(config.httpUrl, { spacingMs: config.rpcSpacingMs });
+  const external=config.hydrationMode==='external';
+  const pacer=external?new SharedRpcPacer(db,config.httpUrl,{spacingMs:config.rpcSpacingMs}):null;
+  const rpc = new SolanaRpc(config.httpUrl, { spacingMs: config.rpcSpacingMs,pacer });
+  const reportHealth=(state,activePools,lastError=null)=>
+    setHealth(db,state,activePools,lastError,config.hydrationMode||'inline');
   let backoff = config.reconnectMs;
   while (!signal.aborted) {
     let session;
@@ -167,14 +175,14 @@ export async function runS1b(db, config, signal) {
     try {
       tracked = await selectPools(db, config.maxPools, config.maxPoolAgeMinutes);
       if (!tracked.length) {
-        await setHealth(db, 'waiting_for_pools', 0);
+        await reportHealth( 'waiting_for_pools', 0);
         log('idle', { reason: 'no_recent_pools' });
         await sleep(30000);
         continue;
       }
       const anchors = new Map();
       for (const address of tracked) anchors.set(address, await latestSignature(db, address));
-      await setHealth(db, 'connecting', tracked.length);
+      await reportHealth( 'connecting', tracked.length);
       session = createWsSession(config.wsUrl, {
         maxQueue: config.maxPendingNotifications,
         onEvent: item => recordEvent(db, item)
@@ -185,7 +193,7 @@ export async function runS1b(db, config, signal) {
         await session.subscribe(address);
         watchSessionIds.push(await beginWatch(db, address, anchors.get(address)));
       }
-      await setHealth(db, 'connected', tracked.length);
+      await reportHealth( 'connected', tracked.length);
       log('connected', { pools: tracked.length, source: 'solana_logsSubscribe', commitment: 'finalized' });
       // Subscribe first, then recover history using a cursor captured before subscription.
       for (const address of tracked) {
@@ -200,15 +208,15 @@ export async function runS1b(db, config, signal) {
       while (!signal.aborted && Date.now() < endsAt) {
         if (session.closeReason) throw new Error(`WebSocket ended (${session.closeReason})`);
         if (session.heartbeatAgeMs > 120000) throw new Error('WebSocket heartbeat stalled');
-        await processTransactions(db, rpc, config);
-        await setHealth(db, 'connected', tracked.length);
+        if(!external)await processTransactions(db, rpc, config);
+        await reportHealth( 'connected', tracked.length);
         await sleep(1000);
       }
       backoff = config.reconnectMs;
     } catch (error) {
       const message = shortError(error);
       log('session_error', { error: message, trackedPools: tracked.length });
-      try { await setHealth(db, 'reconnecting', 0, message); } catch { /* database may be down */ }
+      try { await reportHealth( 'reconnecting', 0, message); } catch { /* database may be down */ }
       backoff = Math.min(backoff * 2, 60000);
     } finally {
       const reason = session?.closeReason || (signal.aborted ? 'shutdown' : 'session_rotation');
@@ -218,5 +226,5 @@ export async function runS1b(db, config, signal) {
     }
     if (!signal.aborted) await sleep(backoff);
   }
-  await setHealth(db, 'stopped', 0);
+  await reportHealth( 'stopped', 0);
 }

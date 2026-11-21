@@ -34,11 +34,11 @@ export async function recordEvent(db, event) {
   await db.query(`UPDATE onchain_stream_health SET last_event_at=now() WHERE singleton=true`);
 }
 
-export async function setHealth(db, state, activePools, lastError = null) {
-  await db.query(`INSERT INTO onchain_stream_health(singleton,state,active_pools,last_error)
-    VALUES(true,$1,$2,$3) ON CONFLICT(singleton) DO UPDATE SET
+export async function setHealth(db, state, activePools, lastError = null, hydrationMode = 'inline') {
+  await db.query(`INSERT INTO onchain_stream_health(singleton,state,active_pools,last_error,hydration_mode)
+    VALUES(true,$1,$2,$3,$4) ON CONFLICT(singleton) DO UPDATE SET
     state=EXCLUDED.state,active_pools=EXCLUDED.active_pools,last_error=EXCLUDED.last_error,
-    heartbeat_at=now()`, [state, activePools, lastError?.slice(0, 250) ?? null]);
+    hydration_mode=EXCLUDED.hydration_mode,heartbeat_at=now()`, [state, activePools, lastError?.slice(0, 250) ?? null,hydrationMode]);
 }
 
 export async function beginRecovery(db, poolAddress, previousSignature) {

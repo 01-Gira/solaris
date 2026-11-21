@@ -1,0 +1,24 @@
+# S1b.2 staged migration overlay (apply after compose.s1b.yaml).
+# 1. Recreate stream with S1B_HYDRATION_MODE=external.
+# 2. Verify stream health mode=external.
+# 3. Start ONE hydration worker. Never run old inline streamer concurrently.
+services:
+  stream:
+    environment:
+      S1B_HYDRATION_MODE: external
+  hydration:
+    build: .
+    command: ["node", "src/s1b/hydration.js"]
+    init: true
+    restart: unless-stopped
+    profiles: ["s1b"]
+    env_file:
+      - .env
+    environment:
+      S1B_HYDRATION_MODE: external
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    # Read-only blockchain RPC; no exposed ports or wallet keys.

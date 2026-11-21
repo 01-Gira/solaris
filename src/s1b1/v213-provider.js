@@ -48,7 +48,7 @@ export function inspectProviderCohort(row){
   poolSha256Prefix:hash(row.pool_address),
   historicalEventRows:historicalCount,
   failedOnchainRows:Number(row.failed_onchain_rows||0),
-  singleTradeCandidateRows:Number(row.single_candidate_rows||0),
+  successfulTransactionEventRows:Number(row.successful_tx_event_rows||0),
   earliestHistoricalBlockDay:date(row.earliest_historical_block),
   latestHistoricalBlockDay:date(row.latest_historical_block),
   firstDiscoveredDay:date(row.pool_first_seen_at),

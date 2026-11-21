@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/collector.js && node --check src/server.js && node --check src/db.js && node --check src/normalize.js && node --check src/gecko.js && node --check src/s1b/config.js && node --check src/s1b/rpc.js && node --check src/s1b/parse.js && node --check src/s1b/store.js && node --check src/s1b/worker.js && node --check src/s1b/index.js && node --check src/s1b1/decoder.js && node --check src/s1b1/index.js && node --check src/s2/risk.js && node --check src/s2/index.js && node --check src/s3/engine.js && node --check src/s3/index.js && node --check src/s4/policy.js && node --check src/s4/export-context.js && node --check src/s4/orchestrator.js && node --check src/s4/index.js && node --check src/s4/doctor.js && node --check src/s4/hydration-metrics.js && node --check src/s4/hydration-report.js",
+    "check": "node --check src/index.js && node --check src/collector.js && node --check src/server.js && node --check src/db.js && node --check src/normalize.js && node --check src/gecko.js && node --check src/s1b/config.js && node --check src/s1b/rpc.js && node --check src/s1b/parse.js && node --check src/s1b/store.js && node --check src/s1b/worker.js && node --check src/s1b/index.js && node --check src/s1b1/decoder.js && node --check src/s1b1/index.js && node --check src/s2/risk.js && node --check src/s2/index.js && node --check src/s3/engine.js && node --check src/s3/index.js && node --check src/s4/policy.js && node --check src/s4/export-context.js && node --check src/s4/orchestrator.js && node --check src/s4/index.js && node --check src/s4/doctor.js && node --check src/s4/hydration-metrics.js && node --check src/s4/hydration-report.js && node --check src/s1b/rpc-pacer.js && node --check src/s1b/hydration.js",
     "prune": "node scripts/prune.js",
     "start:s1b": "node src/s1b/index.js",
     "decode:s1b1": "node src/s1b1/index.js",
@@ -19,7 +19,8 @@
     "s4:export": "node src/s4/export-context.js",
     "s4:run": "node src/s4/index.js",
     "s4:doctor": "node src/s4/doctor.js",
-    "s4:hydration": "node src/s4/hydration-report.js"
+    "s4:hydration": "node src/s4/hydration-report.js",
+    "start:s1b-hydration": "node src/s1b/hydration.js"
   },
   "dependencies": {
     "pg": "^8.13.0"

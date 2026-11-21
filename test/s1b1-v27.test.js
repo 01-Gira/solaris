@@ -26,17 +26,16 @@ function tx({program=PUMP_FUN,missing=null,close=false,create=false,extra=[]}={}
   ...(program===PUMP_SWAP?[transfer('userQuote','poolQuote','quoteMint',level)]:[]),...extra];
  const lifecycle=[
   ...(create?[{programId:ata,stackHeight:level,
-   parsed:{type:'create',info:{account:missing||'userBase'}}}]:[]),
-  ...(close?[{programId:token,stackHeight:level,
-   parsed:{type:'closeAccount',info:{account:missing||'userBase'}}}]:[])
+   parsed:{type:'create',info:{account:missing||'userBase'}}}]:[])
  ];
  const trace=inner?[candidate,...lifecycle,...transfers]:[...lifecycle,...transfers];
+ const closeInstruction={programId:token,parsed:{type:'closeAccount',info:{account:missing||'userBase'}}};
  const keys=[...new Set(accounts)].map(pubkey=>({pubkey,signer:pubkey==='user'}));
  const entries=(program===PUMP_FUN?[['poolBase','baseMint'],['userBase','baseMint']]:
   [['poolBase','baseMint'],['userBase','baseMint'],['poolQuote','quoteMint'],['userQuote','quoteMint']])
   .filter(([account])=>account!==missing).map(([account,mint])=>({
    accountIndex:keys.findIndex(k=>k.pubkey===account),mint}));
- return {transaction:{message:{instructions:inner?[{programId:'router'}]:[candidate],
+ return {transaction:{message:{instructions:[...(inner?[{programId:'router'}]:[candidate]),...(close?[closeInstruction]:[])],
    accountKeys:keys},signatures:[signature]},
   meta:{err:null,innerInstructions:[{index:0,instructions:trace}],
    preTokenBalances:entries,postTokenBalances:entries,preBalances:keys.map(()=>1000),

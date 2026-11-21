@@ -69,6 +69,7 @@ function fakeDatabase(){
   }
   if(sql.includes('UPDATE s42_research_tasks')){
    if(sql.includes("SET status='completed'"))state.task.status='completed';
+   else if(sql.includes("SET status='running'"))state.task.status='running';
    else{state.task.status=args[1];state.task.blocked_reason=args[2];}
    return {rows:[]};
   }

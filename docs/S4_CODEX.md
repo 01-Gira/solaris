@@ -163,3 +163,32 @@ npm run s4:run -- --context .solaris/s4-context.json --agents audit
 `validated_json` removes the `--output-schema` CLI argument, but **does not loosen SOLARIS' own strict schema, evidence ID, risk policy, economics or execution checks**. If Codex does not return the required JSON object, the result becomes `AGENT_ERROR`, not a successful decision. No automatic retry or paid fallback occurs. One invocation can consume ChatGPT Codex allowance even if it fails.
 
 Do not paste raw Codex stderr, `.env`, authentication tokens, private keys or full `.solaris` logs. Send only the safe `status` and `reason` fields.
+
+
+## Troubleshooting: MODEL_NOT_AVAILABLE in both output modes
+
+If both `structured` and `validated_json` return `MODEL_NOT_AVAILABLE`, do not keep swapping JSON settings. This error category is inferred from CLI output and may be related to a **model selection**, a local provider configuration, or account-level model access. The doctor only checked CLI flags and login; it did **not** query an actual model.
+
+First, on your Mac (not inside the container), check:
+
+```bash
+codex --version
+codex login status
+# Launch normal interactive Codex and choose /model; note the exact model ID that your account offers.
+codex
+```
+
+The model picker can show which models the current ChatGPT-login session supports. Do not share `~/.codex/auth.json`, full config files, authentication tokens, credentials or unredacted CLI output.
+
+S4 supports an **optional one-run model override** `S4_CODEX_MODEL`. It is validated as a bounded identifier, supplied as the CLI `--model` argument, and does not edit `~/.codex/config.toml`. **Replace `<model-from-your-codex-picker>` with a model actually available to your login**:
+
+```bash
+S4_CODEX_ENABLED=1 S4_DRY_RUN=0 \
+S4_CODEX_MODEL=<model-from-your-codex-picker> \
+S4_PAID_API_FALLBACK=0 S4_LIVE_TRADING_ENABLED=0 \
+npm run s4:run -- --context .solaris/s4-context.json --agents audit
+```
+
+Without `S4_CODEX_MODEL`, SOLARIS keeps the Codex CLI's default model. It does **not** guess which model is available, switch models on errors, or make retries. The adapter forces the built-in `openai` model provider, while continuing to require ChatGPT (not API-key) login before a call. This blocks accidental use of custom provider definitions but does not remove normal ChatGPT usage limits.
+
+If the selected model still fails, provide only the **model identifier**, Codex version, and S4 `reason` classification. A successful login is not proof that a specific model is accessible.

@@ -6,20 +6,20 @@ import {runV213,v213Limit} from '../src/s1b1/v213-report.js';
 const item=(x={})=>({
  pool_address:'sensitive-pool-address',
  historical_event_rows:'29',failed_onchain_rows:'23',
- successful_tx_event_rows:'6',earliest_historical_block:'2024-08-25T03:00:00Z',
+ successful_tx_event_rows:'6',unknown_tx_error_event_rows:'0',earliest_historical_block:'2024-08-25T03:00:00Z',
  latest_historical_block:'2024-08-26T01:00:00Z',
  pool_first_seen_at:'2026-11-21T00:00:00Z',
  current_provider_created:'2026-11-21T00:00:00Z',
  earliest_provider_created:'2026-11-21T00:00:00Z',
  latest_provider_created:'2026-11-21T00:00:00Z',
- snapshot_count:'2',distinct_creation_values:'1',...x
+ snapshot_count:'2',comparable_creation_snapshot_count:'2',distinct_creation_values:'1',...x
 });
 test('provider creation is not authoritative on-chain creation',()=>{
  const x=inspectProviderCohort(item());
  assert.equal(x.historicalEventRows,29);
  assert.equal(x.chronology,'current_provider_created_after_oldest_historical_block');
  assert.equal(x.earliestComparison,'earliest_snapshot_creation_after_oldest_historical_block');
- assert.equal(x.sourceVariation,'provider_created_value_stable_in_available_snapshots');
+ assert.equal(x.sourceVariation,'provider_created_value_stable_in_multiple_snapshots');
  assert.equal(x.adjudication,'provider_chain_creation_conflict_requires_external_proof');
  assert.equal(x.immutableChainProvenanceVerified,false);
  assert.equal(x.verifiedFills,0);
@@ -37,10 +37,20 @@ test('missing provider metadata does not infer date validity',()=>{
  const x=inspectProviderCohort(item({
   current_provider_created:null,
   earliest_provider_created:null,latest_provider_created:null,
-  distinct_creation_values:'0'
+  distinct_creation_values:'0',comparable_creation_snapshot_count:'0'
  }));
  assert.equal(x.adjudication,'provider_creation_metadata_unavailable');
- assert.equal(x.sourceVariation,'no_provider_created_value_in_snapshots');
+ assert.equal(x.sourceVariation,'insufficient_comparable_provider_snapshots');
+});
+test('single provider snapshot cannot establish historical stability',()=>{
+ const r=inspectProviderCohort(item({snapshot_count:'1',
+  comparable_creation_snapshot_count:'1'}));
+ assert.equal(r.sourceVariation,'insufficient_comparable_provider_snapshots');
+ assert.equal(r.providerSnapshotCount,1);
+});
+test('event partition cannot silently mislabel successful JSON null as failure',()=>{
+ assert.throws(()=>inspectProviderCohort(item({failed_onchain_rows:'29',successful_tx_event_rows:'6'})),
+  /invalid_v213_status_partition/);
 });
 test('privacy-safe summary preserves historical count',()=>{
  const sum=createProviderCohortSummary();
@@ -48,6 +58,9 @@ test('privacy-safe summary preserves historical count',()=>{
  const r=sum.result(),serialized=JSON.stringify(r);
  assert.equal(r.historicalPoolCount,1);
  assert.equal(r.historicalEventRows,29);
+ assert.equal(r.failedOnchainEventRows,23);
+ assert.equal(r.successfulTransactionEventRows,6);
+ assert.equal(r.unknownTransactionErrorEventRows,0);
  assert.equal(r.verifiedFills,0);
  assert.equal(r.economicsAuthorized,false);
  assert.ok(!serialized.includes('sensitive-pool-address'));
@@ -71,6 +84,8 @@ test('runV213 reads bounded immutable snapshot evidence without writes',async()=
  assert.equal(r.historicalEventRows,29);
  assert.equal(queries.length,2);
  assert.ok(queries[0].sql.includes('pool_snapshots'));
+ assert.ok(queries[0].sql.includes("t.tx_error <> 'null'::jsonb"));
+ assert.ok(queries[0].sql.includes("t.tx_error = 'null'::jsonb"));
  assert.ok(queries[0].sql.includes("interval '30 days'"));
  assert.ok(queries.every(x=>!/(UPDATE|INSERT|DELETE|TRUNCATE)\s/i.test(x.sql)));
 });

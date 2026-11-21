@@ -16,8 +16,17 @@ export async function runV213(db,{limit=1000}={}){
   const {rows}=await db.query(`WITH historical AS (
    SELECT e.pool_address,
      COUNT(*)::bigint AS historical_event_rows,
-     COUNT(*) FILTER (WHERE t.tx_error IS NOT NULL)::bigint AS failed_onchain_rows,
-     COUNT(*) FILTER (WHERE t.tx_error IS NULL)::bigint AS successful_tx_event_rows,
+     -- tx_error is JSONB. JSONB 'null' is NOT SQL NULL.
+     -- Stored JSONB null means meta.err=null (successful transaction).
+     COUNT(*) FILTER (
+       WHERE t.tx_error IS NOT NULL AND t.tx_error <> 'null'::jsonb
+     )::bigint AS failed_onchain_rows,
+     COUNT(*) FILTER (
+       WHERE t.tx_error = 'null'::jsonb
+     )::bigint AS successful_tx_event_rows,
+     COUNT(*) FILTER (
+       WHERE t.tx_error IS NULL
+     )::bigint AS unknown_tx_error_event_rows,
      MIN(t.block_time) AS earliest_historical_block,
      MAX(t.block_time) AS latest_historical_block
    FROM onchain_pool_events e
@@ -28,6 +37,8 @@ export async function runV213(db,{limit=1000}={}){
   ), snapshot_summary AS (
    SELECT s.pool_address,
      COUNT(*)::bigint AS snapshot_count,
+     COUNT(NULLIF(s.source_data#>>'{attributes,pool_created_at}',''))::bigint
+       AS comparable_creation_snapshot_count,
      COUNT(DISTINCT NULLIF(s.source_data#>>'{attributes,pool_created_at}',''))::bigint
        AS distinct_creation_values,
      (ARRAY_AGG(NULLIF(s.source_data#>>'{attributes,pool_created_at}','')
@@ -39,10 +50,11 @@ export async function runV213(db,{limit=1000}={}){
    GROUP BY s.pool_address
   )
   SELECT h.pool_address,h.historical_event_rows,h.failed_onchain_rows,
-   h.successful_tx_event_rows,h.earliest_historical_block,h.latest_historical_block,
+   h.successful_tx_event_rows,h.unknown_tx_error_event_rows,h.earliest_historical_block,h.latest_historical_block,
    p.pool_created_at AS current_provider_created,
    p.first_seen_at AS pool_first_seen_at,
    COALESCE(s.snapshot_count,0) AS snapshot_count,
+   COALESCE(s.comparable_creation_snapshot_count,0) AS comparable_creation_snapshot_count,
    COALESCE(s.distinct_creation_values,0) AS distinct_creation_values,
    s.earliest_provider_created,s.latest_provider_created
   FROM historical h JOIN pools p ON p.pool_address=h.pool_address

@@ -21,9 +21,16 @@ export function inspectProviderCohort(row){
  const historicalCount=Number(row.historical_event_rows);
  const snapCount=Number(row.snapshot_count);
  const distinctCount=Number(row.distinct_creation_values);
- if(![historicalCount,snapCount,distinctCount].every(x=>Number.isSafeInteger(x)&&x>=0)||
-  historicalCount===0||distinctCount>snapCount)
+ const comparableCount=Number(row.comparable_creation_snapshot_count ?? row.snapshot_count);
+ if(![historicalCount,snapCount,distinctCount,comparableCount].every(x=>Number.isSafeInteger(x)&&x>=0)||
+  historicalCount===0||comparableCount>snapCount||distinctCount>comparableCount)
   throw Error('invalid_v213_counts');
+ const failedCount=Number(row.failed_onchain_rows ?? 0);
+ const successfulCount=Number(row.successful_tx_event_rows ?? 0);
+ const unknownCount=Number(row.unknown_tx_error_event_rows ?? 0);
+ if(![failedCount,successfulCount,unknownCount].every(x=>Number.isSafeInteger(x)&&x>=0)||
+  failedCount+successfulCount+unknownCount!==historicalCount)
+  throw Error('invalid_v213_status_partition');
  const oldest=parseTime(row.earliest_historical_block);
  const current=parseTime(row.current_provider_created);
  const first=parseTime(row.earliest_provider_created);
@@ -38,8 +45,10 @@ export function inspectProviderCohort(row){
   oldest===null?'historical_block_time_missing':
   first>oldest+300000?'earliest_snapshot_creation_after_oldest_historical_block':
   'earliest_snapshot_creation_not_after_oldest_historical_block';
- const sourceVariation=distinctCount>1?'provider_created_value_changed_across_snapshots':
-  distinctCount===1?'provider_created_value_stable_in_available_snapshots':
+ const sourceVariation=comparableCount<2?
+  'insufficient_comparable_provider_snapshots':
+  distinctCount>1?'provider_created_value_changed_across_snapshots':
+  distinctCount===1?'provider_created_value_stable_in_multiple_snapshots':
   'no_provider_created_value_in_snapshots';
  const firstSeenRelation=firstSeen===null||oldest===null?'not_comparable':
   firstSeen>oldest?'discovered_after_historical_transaction':
@@ -47,8 +56,9 @@ export function inspectProviderCohort(row){
  return {
   poolSha256Prefix:hash(row.pool_address),
   historicalEventRows:historicalCount,
-  failedOnchainRows:Number(row.failed_onchain_rows||0),
-  successfulTransactionEventRows:Number(row.successful_tx_event_rows||0),
+  failedOnchainRows:failedCount,
+  successfulTransactionEventRows:successfulCount,
+  unknownTransactionErrorRows:unknownCount,
   earliestHistoricalBlockDay:date(row.earliest_historical_block),
   latestHistoricalBlockDay:date(row.latest_historical_block),
   firstDiscoveredDay:date(row.pool_first_seen_at),
@@ -56,6 +66,7 @@ export function inspectProviderCohort(row){
   earliestProviderCreatedDay:date(row.earliest_provider_created),
   latestProviderCreatedDay:date(row.latest_provider_created),
   providerSnapshotCount:snapCount,
+  comparableProviderSnapshotCount:comparableCount,
   distinctProviderCreatedValues:distinctCount,
   chronology,earliestComparison,sourceVariation,firstSeenRelation,
   adjudication:sourceUnknown?'provider_creation_metadata_unavailable':
@@ -67,9 +78,11 @@ export function inspectProviderCohort(row){
 }
 export function createProviderCohortSummary(){
  const records=[],byAdjudication={},byVariation={},byChronology={};
- let total=0;
+ let total=0,failed=0,successful=0,unknown=0;
  return {add(row){
   const r=inspectProviderCohort(row);records.push(r);total+=r.historicalEventRows;
+  failed+=r.failedOnchainRows;successful+=r.successfulTransactionEventRows;
+  unknown+=r.unknownTransactionErrorRows;
   tally(byAdjudication,r.adjudication,r.historicalEventRows);
   tally(byVariation,r.sourceVariation,r.historicalEventRows);
   tally(byChronology,r.chronology,r.historicalEventRows);
@@ -78,6 +91,8 @@ export function createProviderCohortSummary(){
    a.poolSha256Prefix.localeCompare(b.poolSha256Prefix));
   return {kind:'s1b1_v213_provider_provenance_audit',version:V213_VERSION,
    historicalPoolCount:sorted.length,historicalEventRows:total,
+   failedOnchainEventRows:failed,successfulTransactionEventRows:successful,
+   unknownTransactionErrorEventRows:unknown,
    byAdjudication:ranked(byAdjudication),
    byProviderCreationVariation:ranked(byVariation),
    byCurrentCreationChronology:ranked(byChronology),

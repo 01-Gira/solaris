@@ -78,7 +78,7 @@ export function inspectProviderCohort(row){
 }
 export function createProviderCohortSummary(){
  const records=[],byAdjudication={},byVariation={},byChronology={};
- let total=0;
+ let total=0,failed=0,successful=0,unknown=0;
  return {add(row){
   const r=inspectProviderCohort(row);records.push(r);total+=r.historicalEventRows;
   failed+=r.failedOnchainRows;successful+=r.successfulTransactionEventRows;

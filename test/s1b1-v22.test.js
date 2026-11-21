@@ -57,7 +57,7 @@ test('PumpSwap IDL account check uses pool index zero',()=>{
 });
 test('failed transaction and signature mismatch do not proceed',()=>{
  assert.equal(inspectAuthorityEvidence(pool,'not-sig',fixture()).status,'signature_mismatch');
- assert.equal(inspectAuthorityEvidence(pool,signature,fixture({err:{InstructionError:[0,'Custom']]})).status,'transaction_failed');
+ assert.equal(inspectAuthorityEvidence(pool,signature,fixture({err:{InstructionError:[0,'Custom']}})).status,'transaction_failed');
 });
 test('summary is read-only and redacts full signature and pool',()=>{
  const sum=createAuthoritySummary();

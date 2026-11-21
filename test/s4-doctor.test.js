@@ -50,3 +50,11 @@ test('doctor rejects API-key login',async()=>{
  const r=await diagnoseS4({spawnImpl:fakeCli({login:'Logged in using an API key'}),env:{PATH:'/bin',HOME:'/tmp'}});
  assert.equal(r.status,'BLOCKED');assert.equal(r.reason,'CHATGPT_LOGIN_REQUIRED');
 });
+
+test('normal CLI help mentioning --output-schema must not be misclassified as schema failure',()=>{
+ assert.equal(classifyCodexFailure('error: unexpected argument --output-schema\nUsage: codex exec [OPTIONS]'),'CLI_ARGUMENT_OR_VERSION');
+ assert.equal(classifyCodexFailure('note: --output-schema is supported, transport broke'),'UNCLASSIFIED');
+});
+test('concrete invalid schema is classified without returning raw text',()=>{
+ assert.equal(classifyCodexFailure('invalid schema for response_format: schema_id private'), 'STRUCTURED_OUTPUT_SCHEMA');
+});

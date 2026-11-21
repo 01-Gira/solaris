@@ -176,3 +176,27 @@ test('pool address and categorical prompt injection are not forwarded',()=>{
  assert.equal(x.pools[0].venue_family,'other');
  assert.ok(!JSON.stringify(x).includes('IGNORE'));
 });
+
+test('validated_json mode must be an explicit opt-in; no automatic API fallback',()=>{
+ const normal=createRunPlan({S4_DRY_RUN:'0',S4_CODEX_ENABLED:'1'},['audit']);
+ assert.equal(normal.outputMode,'structured');
+ const optional=createRunPlan({S4_DRY_RUN:'0',S4_CODEX_ENABLED:'1',S4_CODEX_OUTPUT_MODE:'validated_json'},['audit']);
+ assert.equal(optional.outputMode,'validated_json');
+ assert.equal(optional.maxCalls,1);
+ assert.equal(optional.paidApiFallback,false);
+ assert.equal(optional.economicsAuthorized,false);
+ assert.throws(()=>createRunPlan({S4_CODEX_OUTPUT_MODE:'unrestricted'}),/S4_CODEX_OUTPUT_MODE/);
+});
+test('optional mode still rejects non-conforming outputs and records errors',async()=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'solaris-test-s4-'));
+ try{
+  const p=createRunPlan({S4_DRY_RUN:'0',S4_CODEX_ENABLED:'1',S4_CODEX_OUTPUT_MODE:'validated_json'},['audit']);
+  let observedMode;
+  const r=await executeS4({context:raw,plan:p,auditPath:path.join(dir,'audit.ndjson'),
+    agentRunner:async({outputMode})=>{observedMode=outputMode;return {agent:'audit',trade_order:'BUY'}}});
+  assert.equal(observedMode,'validated_json');
+  assert.equal(r.results[0].status,'AGENT_ERROR');
+  assert.equal(r.completed,0);assert.equal(r.economicsAuthorized,false);
+  assert.equal(r.outputMode,'validated_json');
+ }finally{await rm(dir,{recursive:true,force:true});}
+});

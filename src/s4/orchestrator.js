@@ -19,11 +19,14 @@ export function createRunPlan(env=process.env,roles=ROLE_NAMES){
  const dry=env.S4_DRY_RUN!=='0';
  const enabled=env.S4_CODEX_ENABLED==='1';
  if(!dry&&!enabled)throw new Error('codex_enable_flag_required');
+ const outputMode=env.S4_CODEX_OUTPUT_MODE||'structured';
+ if(!['structured','validated_json'].includes(outputMode))
+  throw new Error('S4_CODEX_OUTPUT_MODE must be structured or validated_json');
  const timeout=Number(env.S4_TIMEOUT_MS||120000);
  if(!Number.isInteger(timeout)||timeout<15000||timeout>300000)
   throw new Error('S4_TIMEOUT_MS must be 15000..300000');
  return {backend:'codex',dryRun:dry,enabled,
-  roles,timeoutMs:timeout,maxCalls:dry?0:roles.length,concurrency:1,
+  roles,timeoutMs:timeout,outputMode,maxCalls:dry?0:roles.length,concurrency:1,
   paidApiFallback:false,liveTrading:false,economicsAuthorized:false};
 }
 export function codexChildEnv(env=process.env){
@@ -64,11 +67,13 @@ export async function assertChatGPTLogin({spawnImpl=spawn,env=process.env}={}){
 
 // Classify CLI stderr without ever exposing the raw output: it may contain auth
 // metadata, local paths, model output, or private account details.
+// Match diagnostic *errors*, not the mere occurrence of --output-schema
+// in a generic CLI usage banner. Raw output is NEVER returned or written.
 export function classifyCodexFailure(output=''){
  const text=String(output).slice(-16384).toLowerCase();
- if(/unexpected argument|unrecognized option|unknown option|invalid value for|found argument .*wasn't expected|usage: codex/.test(text))
+ if(/unexpected argument|unrecognized option|unknown option|invalid value for|found argument .*wasn't expected|usage:\s*codex/.test(text))
   return 'CLI_ARGUMENT_OR_VERSION';
- if(/output.schema|json.schema|schema validation|invalid schema|unsupported schema|response format/.test(text))
+ if(/invalid schema for response_format|invalid schema for.*codex_output_schema|output schema file.*(not valid json|failed to read)|schema validation failed|unsupported (response.?format|json.?schema)|additionalproperties.*required/.test(text))
   return 'STRUCTURED_OUTPUT_SCHEMA';
  if(/usage limit|quota|rate.limit|too many requests|exceeded your|error 429|status.?429/.test(text))
   return 'CHATGPT_USAGE_OR_RATE_LIMIT';
@@ -92,9 +97,10 @@ export function parseRoleSelection(input){
   throw new Error('invalid_agent_roles');
  return roles;
 }
-export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=120000,
+export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=120000,outputMode='structured',
   spawnImpl=spawn,env=process.env}){
  if(!ROLE_NAMES.includes(role))throw new Error('invalid_role');
+ if(!['structured','validated_json'].includes(outputMode))throw new Error('invalid_codex_output_mode');
  await assertChatGPTLogin({spawnImpl,env});
  const workspace=await mkdtemp(path.join(os.tmpdir(),'solaris-s4-codex-'));
  const schemaPath=path.join(workspace,'schema.json');
@@ -103,8 +109,12 @@ export async function runCodexAgent({role,context,priorDecisions=[],timeoutMs=12
  // Do not copy the repository, private env files or raw transactions to workspace.
  try{
   await writeFile(schemaPath,JSON.stringify(RESPONSE_SCHEMA),{mode:0o600});
+  // validated_json is manual opt-in, NOT an automatic retry/fallback.
+  // Strict validateDecision is mandatory in both modes, so unconstrained
+  // text can never become a trusted research decision or execution.
   const args=['--ask-for-approval','never','exec','--sandbox','read-only',
-    '--skip-git-repo-check','--output-schema',schemaPath,
+    '--skip-git-repo-check',
+    ...(outputMode==='structured'?['--output-schema',schemaPath]:[]),
     '--output-last-message',answerPath,'-'];
   const outcome=await new Promise((resolve,reject)=>{
    const child=spawnImpl('codex',args,{
@@ -156,7 +166,7 @@ export async function executeS4({context,plan,agentRunner=runCodexAgent,auditPat
    outcome={status:'DRY_RUN',role,reason:'codex_not_invoked'};
   }else{
    try{
-    const decision=await agentRunner({role,context:sanitized,priorDecisions:prior,timeoutMs:plan.timeoutMs});
+    const decision=await agentRunner({role,context:sanitized,priorDecisions:prior,timeoutMs:plan.timeoutMs,outputMode:plan.outputMode});
     // Revalidate at the trust boundary, even if the agent adapter was replaced.
     const validated=validateDecision(role,decision,sanitized);
     prior.push(validated);
@@ -179,7 +189,7 @@ export async function executeS4({context,plan,agentRunner=runCodexAgent,auditPat
    liveTrading:false,paidApiFallback:false});
  }
  return {runId,version:S4_VERSION,mode:plan.dryRun?'DRY_RUN':'CODEX_CHATGPT',
-  maxCalls:plan.maxCalls,completed:results.filter(x=>x.status==='RESEARCH_ONLY').length,
+  maxCalls:plan.maxCalls,outputMode:plan.outputMode,completed:results.filter(x=>x.status==='RESEARCH_ONLY').length,
   results,economicsAuthorized:false,liveTrading:false,paidApiFallback:false,
   contextSha256:contextHash,auditPath:audit};
 }

@@ -16,7 +16,7 @@ const report=(kind,details={})=>console.log(JSON.stringify({
 export async function streamReadyForExternalHydration(db){
  const {rows}=await db.query(`SELECT
   hydration_mode='external' AND heartbeat_at>now()-interval '90 seconds'
-  AND state='connected' AS ready,hydration_mode,state
+  AND state IN ('connected','connecting','waiting_for_pools','reconnecting') AS ready,hydration_mode,state
   FROM onchain_stream_health WHERE singleton=true`);
  return rows[0]?.ready===true;
 }

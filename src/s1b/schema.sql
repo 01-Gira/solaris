@@ -68,3 +68,10 @@ CREATE TABLE IF NOT EXISTS onchain_watch_sessions (
   end_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS onchain_watch_pool_time_idx ON onchain_watch_sessions(pool_address,started_at DESC);
+
+-- S1b.2 provider-wide rate slot reservation shared by stream & hydration.
+-- A hash of the endpoint is the key; credentials/URLs are never stored.
+CREATE TABLE IF NOT EXISTS onchain_rpc_request_budget (
+ provider_key TEXT PRIMARY KEY CHECK(length(provider_key)=64),
+ next_allowed_at TIMESTAMPTZ NOT NULL
+);

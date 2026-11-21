@@ -26,8 +26,10 @@ export function availableBlocks(entries,genesis){
   for(const [signature,receipt] of receipts){
    if(!block.receipts.has(signature))block.receipts.set(signature,new Map());
    const versions=block.receipts.get(signature),digest=hash({wire:receipt.wireDigest,meta:receipt.metaDigest});
-   if(!versions.has(digest))versions.set(digest,{...receipt,sources:new Set()});
-   versions.get(digest).sources.add(entry.organization);
+   if(!versions.has(digest))versions.set(digest,{...receipt,sources:new Set(),witnesses:[]});
+   const observation=versions.get(digest);
+   observation.sources.add(entry.organization);
+   observation.witnesses.push({organization:entry.organization,digest:entry.digest});
   }
  }
  const blocks=new Map(),conflicts=new Set(),unconfirmed=new Set();
@@ -47,6 +49,15 @@ export function confirmedReceipt(blocks,reference){
  if(versions?.size!==1)return null;
  const [receipt]=versions.values();
  if(receipt.sources.size<2)return null;
+ return resolveAccounts(receipt);
+}
+
+// Only for omission detection. A candidate here does not establish receipt quorum.
+export function observedReceiptVariants(block,signature){
+ return [...(block.receipts.get(signature)?.values()??[])].map(resolveAccounts).filter(Boolean);
+}
+
+function resolveAccounts(receipt){
  const loaded=receipt.meta.loadedAddresses;
  const writable=loaded?.writable??[],readOnly=loaded?.readonly??[];
  if(!Array.isArray(writable)||writable.length!==receipt.loadedWritable||
@@ -94,8 +105,19 @@ export function vettedDeployments(entries,blocks,policy){
  });
 }
 
+export function creationIdentity(ix){
+ if(!ix)return null;
+ const discriminator=ix.data.slice(0,16),accounts=ix.accounts;
+ if(ix.program===PROGRAM.pumpswap&&discriminator==='e992d18ecf6840bc')
+  return {venue:'pumpswap',address:accounts[0],baseMint:accounts[3],quoteMint:accounts[4]};
+ if(ix.program===PROGRAM.pumpfun&&['181ec828051c0777','d6904cec5f8b31b4'].includes(discriminator))
+  return {venue:'pumpfun',address:accounts[2],baseMint:accounts[0]};
+ return null;
+}
+
 function validCreation(ix,p){
- if(ix?.program!==PROGRAM[p.venue])return false;
+ const identity=creationIdentity(ix);
+ if(identity?.venue!==p.venue||identity.address!==p.address||identity.baseMint!==p.baseMint)return false;
  const discriminator=ix.data.slice(0,16),accounts=ix.accounts;
  if(p.venue==='pumpswap')return discriminator==='e992d18ecf6840bc'&&
   [p.address,p.baseMint,p.quoteMint,p.baseVault,p.quoteVault,p.baseTokenProgram,p.quoteTokenProgram]

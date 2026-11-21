@@ -1,7 +1,8 @@
 import {artifactDigest,checkpointEntries,records} from './store.js';
 import {authenticate,check,FLOORS,hash,integer,isAddress,isHash,isId,isList,isSignature,micros,ROLE,stamp,validateManifest,VERSION} from './contract.js';
 import {adjudicate,availableBlocks,confirmedReceipt,vettedDeployments,vettedPools} from './evidence.js';
-import {agreedSegments,included} from './continuity.js';
+import {agreedSegments,connectedSegments,included} from './continuity.js';
+import {evaluateLaunches} from './launches.js';
 
 const NAMES=['development','forward'];
 const STATUS=new Set(['success','failed','missing','unavailable','not_landed']);
@@ -33,21 +34,21 @@ function sealedAt(index,subject,from,until,exclude){
 const timestamped=(...args)=>sealedAt(...args)!==null;
 
 function quoteStatus(attempt,quotes,context){
- const {timestamps,plan,chainOrganizations,clockExcluded,window,proofs}=context;
+ const {timestamps,plan,chainOrganizations,clockExcluded,window,proofs,asset}=context;
  const rows=distinctBodies(quotes.filter(row=>!chainOrganizations.has(row.organization)&&row.organization!==attempt.organization));
  if(!rows.length)return {status:'missing_quote'};
  if(rows.length!==1)return {status:'conflicting_quotes'};
  const [entry]=rows,q=entry.body,decision=stamp(attempt.decisionAt);
  const requestAt=stamp(q.requestAt),sourceAt=stamp(q.sourceAt),receivedAt=stamp(q.receivedAt);
  const quoteAt=sealedAt(timestamps,entry.digest,receivedAt,decision+1,clockExcluded);
- if(requestAt===null||sourceAt===null||receivedAt===null||requestAt<stamp(window.from)||
+ if(requestAt===null||sourceAt===null||receivedAt===null||requestAt<(asset.admittedAt??stamp(window.from))||
+  (asset.admittedAt!==undefined&&sourceAt<asset.admittedAt)||
   requestAt>receivedAt||sourceAt>receivedAt||receivedAt>decision||decision-sourceAt>plan.maxQuoteAgeMs||
   receivedAt-requestAt>plan.maxObservedLatencyMs||q.pool!==attempt.pool||q.side!==attempt.side||!proofs.has(q.captureDigest)||
   quoteAt===null)
   return {status:'stale_future_or_unsealed_quote'};
  if(q.status==='no_route'||q.status==='unavailable')return {digest:entry.digest,organization:entry.organization,quoteAt,
   status:attempt.status==='success'?'missing_executable_quote':'observed_quote_failure'};
- const asset=window.pools.find(pool=>pool.address===attempt.pool);
  const [inMint,outMint]=q.side==='buy'?[asset.quoteMint,asset.baseMint]:[asset.baseMint,asset.quoteMint];
  if(q.status!=='observed'||!proofs.has(q.stateDigest)||!proofs.has(q.routeDigest)||q.inputMint!==inMint||q.outputMint!==outMint||
   !(micros(q.inputAmount)>0n)||!(micros(q.outputAmount)>0n)||!integer(q.priceImpactBps,0,10000)||
@@ -56,12 +57,13 @@ function quoteStatus(attempt,quotes,context){
 }
 
 function committedDecision(attempt,quote,context){
- const {decisions,timestamps,clockExcluded,chainOrganizations,plan,window}=context;
+ const {decisions,timestamps,clockExcluded,chainOrganizations,plan,window,asset}=context;
  const candidates=distinctBodies((decisions.get(attempt.id)??[]).filter(row=>!chainOrganizations.has(row.organization)&&
   row.organization!==attempt.organization&&row.organization!==quote.organization));
  if(candidates.length!==1||!quote.digest)return false;
  const [entry]=candidates,decision=stamp(attempt.decisionAt);
  return entry.body.quote===quote.digest&&entry.body.pool===attempt.pool&&entry.body.side===attempt.side&&
+  (asset.admission===undefined||entry.body.admission===asset.admission)&&
   entry.body.decisionAt===attempt.decisionAt&&timestamped(timestamps,entry.digest,
    Math.max(stamp(window.from),decision-plan.maxQuoteAgeMs,quote.quoteAt),decision+1,clockExcluded);
 }
@@ -102,7 +104,8 @@ function chainCoverage(census,context){
 function attemptRecord(attempt,organization,window,pools,segment,proofs){
  const time=stamp(attempt?.decisionAt);
  if(!isId(attempt?.id)||!pools.has(attempt.pool)||!['buy','sell'].includes(attempt.side)||!STATUS.has(attempt.status)||
-  !isBetween(time,stamp(window.from),stamp(window.until))||!proofs.has(attempt.evidenceDigest))return null;
+  !isBetween(time,pools.get(attempt.pool).admittedAt??stamp(window.from),stamp(window.until))||
+  !proofs.has(attempt.evidenceDigest))return null;
  if(['success','failed'].includes(attempt.status)){
   if(!isSignature(attempt.signature)||!isAddress(attempt.blockhash)||!integer(attempt.slot,segment.firstSlot,segment.lastSlot)||
    !integer(attempt.outerIndex,0,255)||!integer(attempt.innerIndex,-1,10000))return null;
@@ -113,7 +116,8 @@ function attemptRecord(attempt,organization,window,pools,segment,proofs){
 function measureWindow(name,context){
  const {plan,manifest,blocks,censuses,fills,quotes,poolProofs,deployments,captureGaps,proofs}=context,window=plan.windows[name];
  const coverage=chainCoverage(censuses.filter(x=>x.body.plan===manifest&&x.body.window===name),{...context,window});
- const pools=new Map(window.pools.map(pool=>[pool.address,pool]));
+ const launches=context.launches?.windows[name];
+ const pools=new Map((launches?.admitted??window.pools).map(pool=>[pool.address,pool]));
  const poolProofsForWindow=group(poolProofs.filter(entry=>{
   const pool=pools.get(entry.body.address);
   return pool&&['venue','baseMint','quoteMint'].every(k=>pool[k]===entry.body[k]);
@@ -124,11 +128,13 @@ function measureWindow(name,context){
  for(const {segment,row} of coverage.selected){
   for(const value of row.body.attempts){
    const attempt=attemptRecord(value,row.organization,window,pools,segment,proofs);
+   const landed=attempt&&['success','failed'].includes(attempt.status);
    if(!attempt||seen.has(attempt.id)||stamp(attempt.decisionAt)>stamp(row.body.scannedAt)||
-    stamp(attempt.decisionAt)<stamp(segment.firstTime)||stamp(attempt.decisionAt)>stamp(segment.lastTime)){
+    (!(launches&&landed)&&stamp(attempt.decisionAt)<stamp(segment.firstTime))||
+    stamp(attempt.decisionAt)>stamp(segment.lastTime)){
     invalid++;continue;
    }
-   if(['success','failed'].includes(attempt.status)){
+   if(landed){
     const invocationId=`${attempt.signature}:${attempt.outerIndex}:${attempt.innerIndex}`;
     if(invocations.has(invocationId)){invalid++;continue;}
     invocations.add(invocationId);
@@ -138,7 +144,7 @@ function measureWindow(name,context){
  }
  const uncensusedDecisions=[...context.decisions.values()].filter(group=>group.some(entry=>{
   const d=entry.body,time=stamp(d.decisionAt);
-  return !context.chainOrganizations.has(entry.organization)&&!seen.has(d.attempt)&&pools.has(d.pool)&&
+  return !context.chainOrganizations.has(entry.organization)&&!seen.has(d.attempt)&&(launches||pools.has(d.pool))&&
    isBetween(time,stamp(window.from),stamp(window.until))&&timestamped(context.timestamps,entry.digest,
     Math.max(stamp(window.from),time-plan.maxQuoteAgeMs),time+1,context.clockExcluded);
  })).length;
@@ -148,10 +154,11 @@ function measureWindow(name,context){
   const eventDay=day(attempt.decisionAt),poolHash=shortHash(attempt.pool);
   const dateCounts=byDay[eventDay]??={attempts:0,strictSignatures:0};dateCounts.attempts++;
   const poolCounts=byPool[poolHash]??={attempts:0,strictSignatures:0};poolCounts.attempts++;
-  const quote=quoteStatus(attempt,quotes.get(attempt.id)??[],{...context,window});inc(byQuote,quote.status);
+  const asset=pools.get(attempt.pool);
+  const quote=quoteStatus(attempt,quotes.get(attempt.id)??[],{...context,window,asset});inc(byQuote,quote.status);
   const usableQuote=quote.status==='point_in_time_quote'||quote.status==='observed_quote_failure';
   if(!usableQuote)quoteGaps++;
-  const decision=committedDecision(attempt,quote,{...context,window});
+  const decision=committedDecision(attempt,quote,{...context,window,asset});
   if(!decision)decisionGaps++;
   if(!['success','failed'].includes(attempt.status))continue;
   const block=blocks.get(attempt.slot),receipt=confirmedReceipt(blocks,attempt);
@@ -198,9 +205,10 @@ function measureWindow(name,context){
  for(const capture of captureGaps)if(coverage.selected.some(({segment})=>
   integer(capture.body.slot,segment.firstSlot,segment.lastSlot))&&unresolvedCapture(capture,blocks,context.resolvedGaps))
   inc(captureCounts,GAP_STATUS.has(capture.body.status)?capture.body.status:'unknown');
- const poolIdentityMissing=window.pools.filter(p=>!(poolProofsForWindow.get(p.address)?.length)).length;
+ const poolIdentityMissing=[...pools.keys()].filter(address=>!poolProofsForWindow.has(address)).length;
  return {attemptedSignatures,decisionIds:seen,segments:coverage.selected.map(x=>x.segment),
   output:{attempts:attempts.length,byState,byUtcDay:byDay,byPool,byQuote,byAdjudication,
+   ...(launches&&{launchUniverse:launches.summary}),
    registeredPools:pools.size,missingPoolIdentity:poolIdentityMissing,invalidOrDuplicateAttempts:invalid,
    missingFinalizedReceipts:missingReceipts,invalidBlockMembershipOrChronology:memberFailures,
    missingOrInvalidQuotes:quoteGaps,missingOrInvalidDecisionCommitments:decisionGaps,uncensusedDecisions,
@@ -211,29 +219,14 @@ function measureWindow(name,context){
    continuity:{...coverage.summary,openAttestedGaps:unresolvedRecovery,attestedGapRowsWithoutBlock:recovery,
     unresolvedCaptureGaps:captureCounts},
    gates:{chainContinuity:mark(coverage.complete&&!unresolvedRecovery&&!Object.keys(captureCounts).length),
+    ...(launches&&{prospectiveLaunchUniverse:mark(launches.complete&&
+      coverage.selected.every(({segment})=>launches.scanSegments.has(segment.digest)))}),
     venueAndPoolIdentity:mark(poolIdentityMissing===0&&(!byAdjudication.pool_identity_unverified)&&(!byAdjudication.deployment_unverified)),
     completeAttemptCensus:mark(coverage.complete&&!invalid&&!openAttempts&&!missingReceipts&&!memberFailures&&!uncensusedDecisions),
     independentAdjudication:mark(attempts.length>0&&!unadjudicated&&unique.size>=FLOORS.signatures),
     decisionTimeInputs:mark(attempts.length>0&&!quoteGaps&&!decisionGaps),
     sampleFloor:mark(strictDays>=FLOORS.eventDays&&strictPools>=FLOORS.pools&&unique.size>=FLOORS.signatures&&
       topPool*100<=FLOORS.maxPoolPercent*unique.size)}}};
-}
-
-function connectedCohorts(windows,segments,conflicts){
- if(windows.length!==2||!windows.every(w=>w.segments.length>0))return false;
- const development=windows[0].segments,forward=windows[1].segments;
- const knownForward=new Set(forward.map(s=>s.digest));
- if(development.some(s=>knownForward.has(s.digest)))return true;
- const first=forward[0];let tip=development.at(-1);
- if(tip.lastSlot>=first.firstSlot||[...conflicts].some(slot=>slot>tip.lastSlot&&slot<first.firstSlot))return false;
- const children=group([...segments.values()],s=>`${s.parentSlot}:${s.parentHash}`);
- while(tip.lastSlot<first.firstSlot){
-  const next=children.get(`${tip.lastSlot}:${tip.lastHash}`)??[];
-  if(next.length!==1||stamp(next[0].firstTime)<stamp(tip.lastTime))return false;
-  tip=next[0];
-  if(tip.digest===first.digest)return true;
- }
- return false;
 }
 
 function explicitlyResolvedGaps(blocks,gaps,segments){
@@ -256,7 +249,7 @@ function unresolvedCapture(capture,blocks,skips){
  return block.roster.includes(signature)&&!confirmedReceipt(blocks,{slot,signature,blockhash:block.blockhash});
 }
 
-export async function qualifyForward(dir,policy,{manifest,checkpoint,asOf=new Date().toISOString()}={}){
+export async function qualifyForward(dir,policy,{manifest,checkpoint,asOf=new Date().toISOString(),includeLaunchDrafts=false}={}){
  check(stamp(asOf)!==null&&(manifest===undefined||isHash(manifest)),'invalid_qualification_scope');
  const groups={},captureGaps=[],proofs=new Set();let plan=null,captures=0,invalidRecords=0;
  const entries=checkpoint?await checkpointEntries(dir,checkpoint):undefined;
@@ -285,18 +278,35 @@ export async function qualifyForward(dir,policy,{manifest,checkpoint,asOf=new Da
  const poolProofs=vettedPools((groups.pool??[]).filter(independentHistory),available.blocks,proofs);
  const forPlan=entries=>entries?.filter(x=>x.body.plan===manifest)??[];
  const resolvedGaps=explicitlyResolvedGaps(available.blocks,groups.gap??[],segments.confirmed);
+ const launchOrganizations=new Set([...policy.authorities.values()].filter(a=>a.roles.includes('census')&&
+  !a.roles.some(role=>['chain','history','market','strategy','clock','execution','discovery','enrollment'].includes(role))).map(a=>a.organization));
+ // A second key at a source with another duty is still the same organization.
+ for(const a of policy.authorities.values())if(a.roles.some(role=>role!=='census'))launchOrganizations.delete(a.organization);
+ const launches=plan?.universe?evaluateLaunches({plan,manifest,frozen,asOf:stamp(asOf),blocks:available.blocks,
+  segments:segments.confirmed,sourceConflicts:segments.conflicts,blockConflicts:available.conflicts,
+  poolProofs,proofs,censusOrganizations:launchOrganizations,seal:(subject,from,until)=>sealedAt(timestamps,subject,from,until,clockExcluded),
+  scans:forPlan(groups.launch_scan),discoveries:forPlan(groups.discovery),outcomes:forPlan(groups.launch_outcome)}):null;
+ if(includeLaunchDrafts)check(launches&&frozen&&!invalidRecords,'sealed_prospective_manifest_required');
  const inPlan=plan?NAMES.map(name=>measureWindow(name,{plan,manifest,timestamps,chainOrganizations,clockExcluded,proofs,poolProofs,deployments,
-  blocks:available.blocks,segments:segments.confirmed,sourceConflicts:segments.conflicts,blockConflicts:available.conflicts,
+  blocks:available.blocks,segments:segments.confirmed,sourceConflicts:segments.conflicts,blockConflicts:available.conflicts,launches,
   asOf:stamp(asOf),captureGaps,decisions:group(forPlan(groups.decision),x=>x.body.attempt),
   gaps:groups.gap??[],resolvedGaps,
   censuses:forPlan(groups.census),fills:group(forPlan(groups.fill),x=>x.body.attempt),quotes:group(forPlan(groups.quote),x=>x.body.attempt)})):[];
  const overlaps=inPlan.length?{
   signatures:[...inPlan[0].attemptedSignatures].filter(key=>inPlan[1].attemptedSignatures.has(key)).length,
   decisionIds:[...inPlan[0].decisionIds].filter(key=>inPlan[1].decisionIds.has(key)).length}:null;
+ if(launches&&overlaps){
+  const registered=launches.windows.development.admitted;
+  for(const [name,key] of [['pools','address'],['baseMints','baseMint']]){
+   const seen=new Set(registered.map(pool=>pool[key]));
+   overlaps[name]=launches.windows.forward.admitted.filter(pool=>seen.has(pool[key])).length;
+  }
+ }
  const both=gate=>inPlan.length===2&&inPlan.every(result=>result.output.gates[gate]==='PASS');
  const gates={independentSources:mark(chainOrganizations.size>=2&&segments.confirmed.size>0),
-  frozenDesign:mark(frozen),cohortIsolation:mark(overlaps&&overlaps.signatures===0&&overlaps.decisionIds===0),
-  sharedFinalizedChain:mark(connectedCohorts(inPlan,segments.confirmed,available.conflicts)),
+  ...(launches&&{prospectiveLaunchSources:mark(launchOrganizations.size>=2)}),
+  frozenDesign:mark(frozen),cohortIsolation:mark(overlaps&&Object.values(overlaps).every(count=>count===0)),
+  sharedFinalizedChain:mark(connectedSegments(inPlan[0]?.segments,inPlan[1]?.segments,segments.confirmed,available.conflicts)),
   historicalState:mark(deployments.length>0&&both('venueAndPoolIdentity')),
   independentFills:mark(both('independentAdjudication')),
   decisionTimeCoverage:mark(both('decisionTimeInputs')),windowSampleFloors:mark(both('sampleFloor')),
@@ -311,6 +321,7 @@ export async function qualifyForward(dir,policy,{manifest,checkpoint,asOf=new Da
   invalidRecords===0&&outstanding.length===0?inPlan[1].output.strictEligibleSignatures:0;
  const verifiedSignatures=new Set(inPlan.flatMap(result=>[...result.attemptedSignatures]));
  return {version:VERSION,asOf,network:policy.network,manifest:manifest??null,checkpoint:checkpoint??null,requirements:FLOORS,gates,windows,
+  ...(launches&&{universeMode:plan.universe.mode}),...(includeLaunchDrafts&&{launchDrafts:launches.drafts}),
   verdict:invalidRecords?'FAIL_TECHNICAL':outstanding.length?'BLOCKED_EXTERNAL_EVIDENCE':'RESEARCH_READY',
   verifiedFills:policy.network==='mainnet'&&frozen&&invalidRecords===0&&overlaps?.signatures===0?total:0,
   fixtureAdjudications:policy.network==='fixture'?total:0,eligibleHoldoutSignatures:eligible,overlaps,

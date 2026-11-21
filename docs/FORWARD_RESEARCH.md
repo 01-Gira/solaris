@@ -31,6 +31,8 @@ Transfer edges have `mint`, `tokenProgram`, `decimals`, `source`, `destination`,
 
 ## Freeze, acquire, replay, monitor
 
+These manifest instructions describe fixed-universe studies. For newly launched pools, use the [prospective launch contract and operator checklist](PROSPECTIVE_LAUNCH.md).
+
 ```sh
 npm run research:forward -- init .solaris/forward-evidence
 npm run research:forward -- policy /private/research/policy.json

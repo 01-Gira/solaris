@@ -52,8 +52,9 @@ export function agreedSegments(entries,genesis){
   let versions=byRange.get(body.firstSlot);
   if(!versions){versions=new Map();byRange.set(body.firstSlot,versions);}
   const digest=hash(body);
-  if(!versions.has(digest))versions.set(digest,{...body,digest,sources:new Set()});
-  versions.get(digest).sources.add(entry.organization);
+  if(!versions.has(digest))versions.set(digest,{...body,digest,sources:new Set(),witnesses:[]});
+  const segment=versions.get(digest);
+  segment.sources.add(entry.organization);segment.witnesses.push(entry);
  }
  const confirmed=new Map(),conflicts=[];
  for(const versions of byRange.values()){
@@ -73,4 +74,25 @@ export function included(block,segment){
  let leaf=hash(blockIdentity(block)),index=proof.index;
  for(const sibling of proof.siblings){leaf=index%2?node(sibling,leaf):node(leaf,sibling);index=Math.floor(index/2);}
  return leaf===segment.root;
+}
+// Check that the two certified paths overlap or are joined by an unambiguous forward bridge.
+export function connectedSegments(development,forward,segments,conflicts){
+ if(!development?.length||!forward?.length)return false;
+ const knownForward=new Set(forward.map(s=>s.digest));
+ if(development.some(s=>knownForward.has(s.digest)))return true;
+ const first=forward[0];let tip=development.at(-1);
+ if(tip.lastSlot>=first.firstSlot||[...conflicts].some(slot=>slot>tip.lastSlot&&slot<first.firstSlot))return false;
+ const children=new Map();
+ for(const segment of segments.values()){
+  const parent=`${segment.parentSlot}:${segment.parentHash}`;
+  if(!children.has(parent))children.set(parent,[]);
+  children.get(parent).push(segment);
+ }
+ while(tip.lastSlot<first.firstSlot){
+  const next=children.get(`${tip.lastSlot}:${tip.lastHash}`)??[];
+  if(next.length!==1||stamp(next[0].firstTime)<stamp(tip.lastTime))return false;
+  tip=next[0];
+  if(tip.digest===first.digest)return true;
+ }
+ return false;
 }

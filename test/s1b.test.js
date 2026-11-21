@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { getS1bConfig } from '../src/s1b/config.js';
 import { parseLogsNotification, parseSignatureHistory, extractTokenBalanceChanges } from '../src/s1b/parse.js';
 import { SolanaRpc, RpcError } from '../src/s1b/rpc.js';
+import { saveTransaction } from '../src/s1b/store.js';
 
 const address = 'So11111111111111111111111111111111111111112';
 const mint = 'So11111111111111111111111111111111111111112';
@@ -43,9 +44,51 @@ test('records token account balance changes only, retaining base units exactly',
   assert.equal(x.pre, '900719925474099999');
   assert.equal(x.decimals, 9);
 });
-test('token account opens and closes are handled from zero', () => {
+test('missing token balance sides are not inferred as zero', () => {
   const tx = { meta: { preTokenBalances: [], postTokenBalances: [{ accountIndex: 3, mint, uiTokenAmount: { amount: '12', decimals: 6 } }] } };
-  assert.equal(extractTokenBalanceChanges(tx)[0].deltaRaw, '12');
+  assert.deepEqual(extractTokenBalanceChanges(tx), []);
+  delete tx.meta.preTokenBalances;
+  assert.deepEqual(extractTokenBalanceChanges(tx), []);
+});
+test('conflicting or duplicated balance metadata never yields an authoritative delta', () => {
+  const before = { accountIndex: 3, mint, owner: address, programId: '1'.repeat(32), uiTokenAmount: { amount: '100', decimals: 6 } };
+  const after = { ...before, uiTokenAmount: { amount: '150', decimals: 6 } };
+  for (const changed of [
+    { ...after, owner: '2'.repeat(32) },
+    { ...after, programId: '2'.repeat(32) },
+    { ...after, uiTokenAmount: { amount: '150', decimals: 9 } }
+  ]) assert.deepEqual(extractTokenBalanceChanges({ meta: { preTokenBalances: [before], postTokenBalances: [changed] } }), []);
+  assert.deepEqual(extractTokenBalanceChanges({ meta: { preTokenBalances: [before, before], postTokenBalances: [after] } }), []);
+});
+test('transaction ingestion rejects truncated metadata before connecting to storage', async () => {
+  const tx = { slot: 1, transaction: { signatures: [sig], message: { accountKeys: [], instructions: [] } }, meta: { err: null, fee: 5000 } };
+  const invalid = [
+    { ...tx, meta: {} },
+    { ...tx, meta: { ...tx.meta, err: undefined } },
+    { ...tx, meta: { ...tx.meta, fee: Number.MAX_SAFE_INTEGER + 1 } },
+    { ...tx, transaction: {} },
+    { ...tx, transaction: { ...tx.transaction, signatures: ['4'.repeat(88)] } },
+    { ...tx, transaction: { ...tx.transaction, message: {} } }
+  ];
+  const db = { connect: async () => { assert.fail('invalid RPC response must not reach storage'); } };
+  for (const value of invalid) await assert.rejects(saveTransaction(db, sig, value), /Incomplete RPC transaction response/);
+});
+test('stored transaction identity owns its derived balances even on repeated hydration', async () => {
+  const tx = { slot: 1, transaction: { signatures: [sig], message: { accountKeys: [address,address,address,address], instructions: [] } }, meta: {
+    err: null, fee: 5000,
+    preTokenBalances: [{ accountIndex: 3, mint, uiTokenAmount: { amount: '100', decimals: 6 } }],
+    postTokenBalances: [{ accountIndex: 3, mint, uiTokenAmount: { amount: '150', decimals: 6 } }]
+  } };
+  for (const inserted of [true, false]) {
+    const calls = [];
+    const client = { query: async (sql, params) => { calls.push({ sql, params }); return { rowCount: inserted ? 1 : 0, rows: [] }; }, release() {} };
+    await saveTransaction({ connect: async () => client }, sig, tx);
+    const insert = calls.find(x => x.sql.includes('INSERT INTO onchain_transactions'));
+    assert.equal(insert.params[3], 'null');
+    assert.equal(calls.filter(x => x.sql.includes('INSERT INTO onchain_token_balance_changes')).length, inserted ? 1 : 0);
+    assert.ok(calls.some(x => x.sql.includes("SET tx_status='resolved'")));
+    assert.equal(calls.at(-1).sql, 'COMMIT');
+  }
 });
 test('missing tx meta yields no inferred trades or prices', () => {
   assert.deepEqual(extractTokenBalanceChanges({}), []);
@@ -67,7 +110,7 @@ test('RPC v1 transaction response remains parsable as raw token balance changes'
     version: 1,
     slot: 123456,
     blockTime: 1795176000,
-    transaction: { signatures: [sig], message: { accountKeys: [] } },
+    transaction: { signatures: [sig], message: { accountKeys: [address,'1'.repeat(32),'2'.repeat(32),'3'.repeat(32)] } },
     meta: {
       err: null,
       fee: 5000,

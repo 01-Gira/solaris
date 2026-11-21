@@ -1,7 +1,7 @@
 // SOLARIS S2: screening, not a token-safety certification or trading approval.
-export const RISK_VERSION='s2-0.4.0';
+export const RISK_VERSION='s2-0.4.1';
 export const TOKEN_PROGRAM='TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
-export const TOKEN_2022='TokenzQdBNbLqP5VEhdkAS6EPFZLh8ixpuJ5X4CkZ';
+export const TOKEN_2022='TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const riskyExtensions=new Set(['transferFeeConfig','transferHook','permanentDelegate','confidentialTransferMint','defaultAccountState','nonTransferable','pausable','mintCloseAuthority']);
 const time=x=>{const n=Date.parse(x);return Number.isFinite(n)?n:null;};
 const numeric=x=>{if(x==null||x==='')return null; const n=Number(x);return Number.isFinite(n)&&n>=0?n:null;};
@@ -19,7 +19,8 @@ export function parseMintProof(value,expectedMint,checkedAt=new Date().toISOStri
   if(info.freezeAuthority!==null&&typeof info.freezeAuthority!=='string')return unknown('invalid_freeze_authority');
   if(value.owner===TOKEN_2022&&!Array.isArray(info.extensions)&&!Array.isArray(parsed.extensions))
     return unknown('token_2022_extensions_unverified');
-  const extensions=(info.extensions||parsed.extensions||[]).map(x=>typeof x==='string'?x:x?.extension||x?.type||'unknown').filter(Boolean);
+  const extensionRows=Array.isArray(info.extensions)?info.extensions:Array.isArray(parsed.extensions)?parsed.extensions:[];
+  const extensions=extensionRows.map(x=>typeof x==='string'?x:x?.extension||x?.type||'unknown').filter(Boolean);
   return {status:'verified_structure_only',reason:null,mint:expectedMint,checkedAt,tokenProgram:value.owner,
     mintAuthority:info.mintAuthority,freezeAuthority:info.freezeAuthority,supplyRaw:String(info.supply),
     decimals:info.decimals,extensions,sensitiveExtensions:extensions.filter(x=>riskyExtensions.has(x)||x==='unknown')};

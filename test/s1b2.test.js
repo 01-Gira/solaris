@@ -68,6 +68,7 @@ test('failed DB pacing never burns the transaction retry budget',async()=>{
  assert.equal(retries,0);
 });
 test('worker checks streamer-attested external mode and fresh connected heartbeat',async()=>{
+ assert.match((await import('../src/s1b/hydration.js')).streamReadyForExternalHydration.toString(),/waiting_for_pools/);
  const good={query:async()=>({rows:[{ready:true,hydration_mode:'external',state:'connected'}]})};
  const stale={query:async()=>({rows:[{ready:false,hydration_mode:'inline',state:'connected'}]})};
  assert.equal(await streamReadyForExternalHydration(good),true);

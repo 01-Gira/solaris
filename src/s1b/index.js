@@ -11,9 +11,9 @@ const controller = new AbortController();
 process.once('SIGTERM', () => controller.abort());
 process.once('SIGINT', () => controller.abort());
 console.log(JSON.stringify({ kind: 's1b_started', at: new Date().toISOString(), readOnly: true,
-  maxPools: config.maxPools, configured: true, wallet: false, trading: false }));
+  maxPools: config.maxPools, configured: true, hydrationMode:config.hydrationMode, wallet: false, trading: false }));
 try { await runS1b(db, config, controller.signal); }
 finally {
-  try { await setHealth(db, 'stopped', 0); } catch { /* DB may be unavailable */ }
+  try { await setHealth(db, 'stopped', 0, null,config.hydrationMode); } catch { /* DB may be unavailable */ }
   await db.end();
 }

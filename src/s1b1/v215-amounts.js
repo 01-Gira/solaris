@@ -68,8 +68,8 @@ function roleBalances(tx,account,mint,expectedOwner){
   prior.decimals<0||prior.decimals>18||prior.decimals!==afterAmt?.decimals)
   return 'balance_amount_or_decimal_unusable';
  const priorOwner=before[0]?.owner,afterOwner=after[0]?.owner;
- if((priorOwner!==undefined&&priorOwner!==expectedOwner)||
-  (afterOwner!==undefined&&afterOwner!==expectedOwner))
+ if(expectedOwner!==null&&((priorOwner!==undefined&&priorOwner!==expectedOwner)||
+  (afterOwner!==undefined&&afterOwner!==expectedOwner)))
   return 'balance_owner_hint_conflict';
  return {delta:BigInt(afterAmt.amount)-BigInt(prior.amount),decimals:prior.decimals};
 }

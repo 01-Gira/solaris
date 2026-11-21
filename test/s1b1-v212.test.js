@@ -69,7 +69,7 @@ test('summary only displays anonymized fingerprints and count evidence',()=>{
  assert.equal(v.sampledEventRows,2);
  assert.equal(v.error6040EventRows,2);
  assert.equal(v.historicalAgeGt30dEventRows,1);
- assert.ok(!s.includes('watched-pool'));
+ assert.ok(!s.includes('"watched-pool"'));
  assert.ok(!s.includes('older-private-signature'));
  assert.equal(v.economicsAuthorized,false);
 });

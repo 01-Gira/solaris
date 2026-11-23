@@ -27,7 +27,7 @@ export function validateBlock(body,genesis){
  return {identity:hash(blockIdentity(body)),receipts};
 }
 
-function normalizeBlock(block,full,slot,genesis,requested){
+export function normalizeBlock(block,full,slot,genesis,requested){
  const roster=block?.signatures;
  const transactions=[];
  if(full){
@@ -37,7 +37,10 @@ function normalizeBlock(block,full,slot,genesis,requested){
   for(const signature of requested){
    const tx=full.transactions[roster.indexOf(signature)],wire=tx?.transaction?.[0];
    if(tx?.transaction?.[1]!=='base64'||!tx.meta||!Object.hasOwn(tx.meta,'err')||!integer(tx.meta.fee))continue;
-   try{verifyWire(wire,signature);}catch{continue;}
+   try{
+    const {version}=verifyWire(wire,signature);
+    if(tx.version!==undefined&&tx.version!==version)continue;
+   }catch{continue;}
    transactions.push({signature,wire,outcome:tx.meta.err===null?'success':'failed',fee:String(tx.meta.fee),
     metaDigest:hash(tx.meta),meta:tx.meta});
   }

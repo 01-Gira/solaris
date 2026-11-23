@@ -6,11 +6,11 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {append,artifactRecord,checkpoint,openStore,records} from '../src/forward/store.js';
 import {authenticate,canonical,DAY,hash,MAINNET,manifestRecord,PROGRAM,PROSPECTIVE,readPolicy,signedPayload,VERSION} from '../src/forward/contract.js';
-import {blockIdentity,collectArchive,rpcTransport} from '../src/forward/archive.js';
+import {blockIdentity,collectArchive,normalizeBlock,rpcTransport} from '../src/forward/archive.js';
 import {buildSegment} from '../src/forward/continuity.js';
 import {qualifyForward} from '../src/forward/report.js';
 import {encode58,verifyWire} from '../src/forward/wire.js';
-import {adjudicate,availableBlocks,confirmedReceipt,vettedDeployments,vettedPools} from '../src/forward/evidence.js';
+import {adjudicate,availableBlocks,confirmedReceipt,invocation,vettedDeployments,vettedPools} from '../src/forward/evidence.js';
 import {decodeBase58} from '../src/s1b1/decoder.js';
 import {SYSTEM,TOKEN,TOKEN_2022} from '../src/s1b1/reconcile-trace.js';
 import {forwardCommand} from '../src/forward/cli.js';
@@ -50,6 +50,19 @@ function wire(id,program,ixAccounts,data,{v0=false,extraKeys=[]}={}){
    ...ixAccounts.map(account=>accounts.indexOf(account)),data.length]),data,...(v0?[Buffer.from([0])]:[])]);
  const signature=sign(null,signedMessage,signer.privateKey);
  return {wire:Buffer.concat([Buffer.from([1]),signature,signedMessage]).toString('base64'),signature:encode58(signature),accounts};
+}
+function v1Wire({data=Buffer.from([1]),programIndex=1,accountIndex=0,otherSigner,extraAccounts=0,configMask=31,
+ configBytes=Buffer.from('0100000000002000400d03000000010000800000','hex')}={}){
+ const signers=otherSigner?[signer,otherSigner]:[signer];
+ const accounts=[...signers.map(key=>key.publicKey.export({type:'spki',format:'der'}).subarray(-32)),decodeBase58(SYSTEM),
+  ...Array.from({length:extraAccounts},(_,i)=>bytes(`v1-account:${i}`))];
+ const mask=Buffer.alloc(4),length=Buffer.alloc(2);
+ mask.writeUInt32LE(configMask);length.writeUInt16LE(data.length);
+ const message=Buffer.concat([Buffer.from([129,signers.length,0,1]),mask,bytes('v1-lifetime'),
+  Buffer.from([2,accounts.length]),...accounts,configBytes,Buffer.from([programIndex,1]),length,
+  Buffer.from([accounts.length-1,0,0,0]),Buffer.from([accountIndex]),data]);
+ const signatures=signers.map(key=>sign(null,message,key.privateKey));
+ return {wire:Buffer.concat([message,...signatures]).toString('base64'),signature:encode58(signatures[0])};
 }
 function receipt(tx,meta={err:null,fee:5000}){
  return {wire:tx.wire,signature:tx.signature,outcome:meta.err===null?'success':'failed',fee:String(meta.fee),meta,metaDigest:hash(meta)};
@@ -115,9 +128,84 @@ function observedTrade(p,id,{wrongCpi=false,extraCpi=false,fee=0}={}){
 test('signed wire checks reject forged bytes and leading signature substitutions, and support v0',()=>{
  const a=wire('a',SYSTEM,[trader],Buffer.from([1]),{v0:true}),b=wire('b',SYSTEM,[trader],Buffer.from([1]));
  assert.equal(verifyWire(a.wire,a.signature).accounts[0],trader);
+ for(const [version,fixture] of [[0,a],['legacy',b]]){
+  const raw=Buffer.from(fixture.wire,'base64');
+  assert.equal(verifyWire(fixture.wire,fixture.signature).version,version);
+  assert.throws(()=>verifyWire(raw.subarray(0,-1).toString('base64'),fixture.signature));
+  raw[65+Number(version===0)+1]=1;
+  assert.throws(()=>verifyWire(raw.toString('base64'),fixture.signature),/invalid_signer_header/);
+ }
  assert.throws(()=>verifyWire(a.wire,b.signature),/wire_signature_mismatch/);
  const modified=Buffer.from(b.wire,'base64');modified[modified.length-1]^=1;
  assert.throws(()=>verifyWire(modified.toString('base64'),b.signature),/invalid_transaction_signature/);
+});
+
+test('v0 receipt resolves writable then readonly lookup accounts without permitting a lookup program ID',()=>{
+ const target=address('lookup:target'),readonly=address('lookup:readonly');
+ const original=wire('lookup',SYSTEM,[trader],Buffer.from([1]),{v0:true});
+ const unsigned=Buffer.from(original.wire,'base64').subarray(65);
+ function transaction(programIndex,writable,readOnly){
+  const message=Buffer.concat([unsigned.subarray(0,-7),Buffer.from([1,programIndex,2,2,3,1,1,1]),
+   bytes('lookup-table'),Buffer.from([writable.length,...writable,readOnly.length,...readOnly])]);
+  const signature=sign(null,message,signer.privateKey);
+  return {wire:Buffer.concat([Buffer.from([1]),signature,message]).toString('base64'),signature:encode58(signature)};
+ }
+ const tx=transaction(1,[9],[2]);
+ const decoded=verifyWire(tx.wire,tx.signature);
+ assert.deepEqual([decoded.loadedWritable,decoded.loadedReadOnly],[1,1]);
+ const {policy}=settings();
+ const body=block(10,9,0,[receipt(tx,{err:null,fee:5000,loadedAddresses:{writable:[target],readonly:[readonly]}})]);
+ const blocks=availableBlocks(['alpha','beta'].map(issuer=>authenticate(signed(policy,'block',issuer,body),policy)),genesis).blocks;
+ const reference=ref(body,tx);
+ assert.deepEqual(invocation(confirmedReceipt(blocks,reference),reference),{program:SYSTEM,accounts:[target,readonly],data:'01'});
+ const dynamicProgram=transaction(2,[9],[2]),emptyLookup=transaction(1,[],[]);
+ assert.throws(()=>verifyWire(dynamicProgram.wire,dynamicProgram.signature),/invalid_wire_message/);
+ assert.throws(()=>verifyWire(emptyLookup.wire,emptyLookup.signature),/empty_address_lookup/);
+});
+
+test('v1 wire verifies the message-first layout, config, all signers and separate instruction payloads',()=>{
+ const tx=v1Wire({data:Buffer.alloc(1500,42),otherSigner:generateKeyPairSync('ed25519'),programIndex:2});
+ const decoded=verifyWire(tx.wire,tx.signature);
+ assert.equal(decoded.version,1);
+ assert.equal(decoded.accounts[0],trader);
+ assert.equal(decoded.accounts[2],SYSTEM);
+ assert.equal(decoded.loadedWritable+decoded.loadedReadOnly,0);
+ assert.deepEqual(decoded.config,{priorityFeeLamports:'9007199254740993',computeUnitLimit:200000,
+  loadedAccountsDataSizeLimit:65536,heapSize:32768});
+ assert.deepEqual(decoded.instructions,[{programIdIndex:2,accounts:[0],data:'2a'.repeat(1500)},
+  {programIdIndex:2,accounts:[],data:''}]);
+ const raw=Buffer.from(tx.wire,'base64');
+ raw[raw.length-1]^=1;
+ assert.throws(()=>verifyWire(raw.toString('base64'),tx.signature),/invalid_transaction_signature/);
+ assert.throws(()=>verifyWire(tx.wire,v1Wire().signature),/wire_signature_mismatch/);
+});
+
+test('v1 wire rejects truncation, extra bytes, malformed config and header or instruction indexes',()=>{
+ const tx=v1Wire(),raw=Buffer.from(tx.wire,'base64');
+ for(const length of [1,40,43,105,raw.length-1])
+  assert.throws(()=>verifyWire(raw.subarray(0,length).toString('base64'),tx.signature));
+ assert.throws(()=>verifyWire(Buffer.concat([raw,Buffer.from([0])]).toString('base64'),tx.signature));
+ for(const [offset,value,reason] of [[1,13,/invalid_signer_header/],[2,1,/invalid_signer_header/],
+  [3,2,/invalid_signer_header/],[40,65,/wire_instruction_limit/],[41,97,/invalid_signer_header/]]){
+  const mutated=Buffer.from(raw);mutated[offset]=value;
+  assert.throws(()=>verifyWire(mutated.toString('base64'),tx.signature),reason);
+ }
+ for(const configMask of [1,2,32,0x80000000]){
+  const bad=v1Wire({configMask});
+  assert.throws(()=>verifyWire(bad.wire,bad.signature),/invalid_v1_config_mask/);
+ }
+ for(const options of [{programIndex:0},{programIndex:2},{accountIndex:2}]){
+  const bad=v1Wire(options);
+  assert.throws(()=>verifyWire(bad.wire,bad.signature),/invalid_wire_message/);
+ }
+ const maximum=v1Wire({data:Buffer.alloc(3917),configMask:0,configBytes:Buffer.alloc(0)});
+ assert.equal(Buffer.from(maximum.wire,'base64').length,4096);
+ assert.equal(verifyWire(maximum.wire,maximum.signature).version,1);
+ const over=v1Wire({data:Buffer.alloc(3920),configMask:0,configBytes:Buffer.alloc(0)});
+ assert.throws(()=>verifyWire(over.wire,over.signature),/invalid_transaction_wire/);
+ const wide=v1Wire({extraAccounts:94,accountIndex:95}),tooMany=v1Wire({extraAccounts:95});
+ assert.equal(verifyWire(wide.wire,wide.signature).accounts.length,96);
+ assert.throws(()=>verifyWire(tooMany.wire,tooMany.signature),/invalid_signer_header/);
 });
 
 test('private store appends idempotently, pins replay and detects tampering',async t=>{
@@ -170,15 +258,18 @@ test('archive spends durable weighted budgets, paces calls, preserves unresolved
  await assert.rejects(rpcTransport('https://example.invalid')('sendTransaction',[],1),/rpc_method_not_allowed/);
 });
 
-test('standalone archival getBlock adapter captures unsigned evidence, never promotes it',async t=>{
+test('standalone archival getBlock adapter captures unsigned v1 evidence, never promotes it',async t=>{
  const {dir}=await tempStore(t),{policy}=settings();
- const tx=wire('fetch',SYSTEM,[trader],Buffer.from([1])),time=Date.parse('2026-10-01T12:00:00Z');let now=time;
+ const tx=v1Wire(),time=Date.parse('2026-10-01T12:00:00Z');let now=time;
  const transport=rpcTransport('https://archive.invalid/fixture',async(_url,opt)=>{
   const request=JSON.parse(opt.body);
   const result=request.method==='getGenesisHash'?genesis:{parentSlot:9,blockhash:address('slot:10'),
    previousBlockhash:address('slot:9'),blockTime:time/1000,...request.params[1].transactionDetails==='signatures'?
-    {signatures:[tx.signature]}:{transactions:[{transaction:[tx.wire,'base64'],meta:{err:null,fee:5000}}]}};
-  if(request.method==='getBlock')assert.equal(request.params[1].commitment,'finalized');
+   {signatures:[tx.signature]}:{transactions:[{transaction:[tx.wire,'base64'],meta:{err:null,fee:5000},version:1}]}};
+  if(request.method==='getBlock'){
+   assert.equal(request.params[1].commitment,'finalized');
+   assert.equal(request.params[1].maxSupportedTransactionVersion,1);
+  }
   return new Response(JSON.stringify({jsonrpc:'2.0',id:request.id,result}));
  });
  const run=await collectArchive(dir,{policy,source:'alpha',requests:[{slot:10,signatures:[tx.signature]}],transport,
@@ -188,6 +279,27 @@ test('standalone archival getBlock adapter captures unsigned evidence, never pro
  const report=await qualifyForward(dir,policy);
  assert.equal(report.unsignedRpcCaptures,1);assert.equal(report.sourceEvidence.agreedBlocks,0);
  assert.ok(!JSON.stringify(report).includes(tx.signature));
+});
+
+test('v1 receipt mapping binds wire order, declared version, loaded accounts and witnessed invocation',()=>{
+ const tx=v1Wire(),other=wire('different receipt',SYSTEM,[trader],Buffer.from([3]));
+ const header={parentSlot:9,blockhash:address('slot:10'),previousBlockhash:address('slot:9'),
+  blockTime:0,signatures:[other.signature,tx.signature]};
+ const entry={transaction:[tx.wire,'base64'],version:1,meta:{err:null,fee:5000}};
+ const otherEntry={transaction:[other.wire,'base64'],version:'legacy',meta:entry.meta};
+ const normalize=(transactions)=>normalizeBlock(header,{...header,transactions},10,genesis,[tx.signature]);
+ const body=normalize([otherEntry,entry]);
+ assert.equal(body.transactions.length,1);
+ assert.equal(normalize([entry,otherEntry]).transactions.length,0);
+ assert.equal(normalize([otherEntry,{...entry,version:0}]).transactions.length,0);
+ const {policy}=settings();
+ const witnessed=(value)=>availableBlocks(['alpha','beta'].map(issuer=>
+  authenticate(signed(policy,'block',issuer,value),policy)),genesis).blocks;
+ const reference=ref(body,tx),w=confirmedReceipt(witnessed(body),reference);
+ assert.equal(w.version,1);
+ assert.deepEqual(invocation(w,reference),{program:SYSTEM,accounts:[trader],data:'01'});
+ const unexpectedLookup={...entry,meta:{...entry.meta,loadedAddresses:{writable:[address('foreign')],readonly:[]}}};
+ assert.equal(confirmedReceipt(witnessed(normalize([otherEntry,unexpectedLookup])),reference),null);
 });
 
 test('a requested witness gap survives header agreement until both archives supply the receipt',async t=>{
